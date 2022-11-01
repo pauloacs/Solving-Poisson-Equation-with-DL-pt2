@@ -52,8 +52,8 @@ class Evaluation():
 		self.pcainput = pk.load(open("ipca_input_more.pkl",'rb'))
 		self.pcap = pk.load(open("ipca_p_more.pkl",'rb'))
 
-		self.pc_p = np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) if np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) > 1 and np.argmax(self.pcap.explained_variance_ratio_.cumsum() > 0.95) <= 64 else 64  #max defined to be 32 here
-		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > 0.995) <= 64 else 64
+		self.pc_p = np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) if np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) > 1 and np.argmax(self.pcap.explained_variance_ratio_.cumsum() > 0.95) <= 128 else 128  #max defined to be 32 here
+		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > 0.995) <= 128 else 128
 
 
 	def interp_weights(self, xyz, uvw):
@@ -125,7 +125,6 @@ class Evaluation():
 		self.Y0 = Y0
 		xy0 = np.concatenate((np.expand_dims(X0, axis=1),np.expand_dims(Y0, axis=1)), axis=-1)
 		points = data[i,0,:self.indice,3:5] #coordinates
-
 		self.vert, self.weights = self.interp_weights(points, xy0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
 
 		# boundaries indice
@@ -282,19 +281,14 @@ class Evaluation():
 			
 			#import pdb; pdb.set_trace()
 
-			# masked_arr = np.ma.array(result_array[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-			# fig, axs = plt.subplots(3,1, figsize=(65, 15))
+			# masked_arr = np.ma.array(result[0,:,:,0], mask=(grid[0,:,:,2] == 0))
 
-			# axs[0].set_title('Prediction', fontsize = 15)
-			# cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-			# plt.colorbar(cf, ax=axs[0])
-
-			# plt.show()
 
 		if field == 'dp_dx':
 			result -= np.mean( 3* result[:,:,0,:] - result[:,:,1,:] )/3
 		elif field == 'dp_dy':
 			result -= np.mean( 3* result[:,1,:,:] - result[:,2,:,:] )/3
+
 
 		################### this applies a gaussian filter to remove boundary artifacts #################
 		if apply_filter:
@@ -354,7 +348,7 @@ class Evaluation():
 
 			dPdx_adim = dPdx * (self.max_x - self.min_x)/pow(U_max_norm,2.0) 
 			dPdy_adim = dPdy * (self.max_y - self.min_y)/pow(U_max_norm,2.0) 
-			p_adim = p * (self.max_y - self.min_y)/pow(U_max_norm,2.0) 
+			p_adim = p / pow(U_max_norm,2.0) 
 			Ux_adim = Ux/U_max_norm 
 			Uy_adim = Uy/U_max_norm 
 
@@ -422,6 +416,11 @@ class Evaluation():
 			N = self.x_array.shape[0]
 			features = self.x_array.shape[3]
 
+			# this is just to check the assembly of the gradients in the physical domain
+			for step in range(y_array.shape[0]):
+				y_array[step,...,0][self.x_array[step,...,2] != 0] -= np.mean(y_array[step,...,0][self.x_array[step,...,2] != 0])
+				y_array[step,...,1][self.x_array[step,...,2] != 0] -= np.mean(y_array[step,...,1][self.x_array[step,...,2] != 0])
+
 			x_array_flat = self.x_array.reshape((N, self.x_array.shape[1]*self.x_array.shape[2], features ))
 			y_array_flat = y_array.reshape((N, y_array.shape[1]*y_array.shape[2], 2))
 			input_flat = x_array_flat.reshape((x_array_flat.shape[0],-1))
@@ -434,25 +433,64 @@ class Evaluation():
 			y_transformed = self.pcap.transform(y_array_flat)[:,:self.pc_p]
 			print(' Total variance from Obst_bool represented: ' + str(np.sum(self.pcap.explained_variance_ratio_[:self.pc_p])))
 
-
 			x_input = input_transformed/self.max_abs_input_PCA
 		
 			comp = self.pcap.components_
 			pca_mean = self.pcap.mean_
 
 			res_concat = np.array(self.model(np.array(x_input)))
-			res_flat_inv = np.dot(res_concat*self.max_abs_output_PCA, comp[:self.pc_p, :]) + pca_mean	
-			res_concat = res_flat_inv.reshape((res_concat.shape[0], shape, shape, 2))
+			res_concat *= self.max_abs_output_PCA 
 
-			#correction
+			res_flat_inv = np.dot(res_concat, comp[:self.pc_p, :]) + pca_mean	
+			res_concat = res_flat_inv.reshape((res_concat.shape[0], shape, shape, 2)) 
+
+			# Dimensionalize pressure gradient field
+			res_concat[...,0] = res_concat[...,0] #* pow(U_max_norm,2.0)/(self.max_x - self.min_x) * self.max_abs_dPdx
+			res_concat[...,1] = res_concat[...,1] #* pow(U_max_norm,2.0)/(self.max_y - self.min_y) * self.max_abs_dPdy
+
+			# the boundary condition is 0 for both dP/dx and dP/dy but at different boundaries
 			self.Ref_BC = 0 
+			
+			# performing the assembly process
 			res_dPdx = self.assemble_prediction('dp_dx', res_concat[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
 			res_dPdy = self.assemble_prediction('dp_dy', res_concat[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
-			#test_dPdx = self.assemble_prediction('dp_dy', y_array[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
-			#test_dPdy = self.assemble_prediction('dp_dy', y_array[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
+			test_dPdx = self.assemble_prediction('dp_dy', y_array[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
+			test_dPdy = self.assemble_prediction('dp_dy', y_array[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
+			
 			################## ----------------//---------------####################################
 
-			# Now we already have the results : res_dPdx, res_dPdy
+			
+			# Plotting intermidiate fields: dP/dx and dP/dy
+
+			fig, axs = plt.subplots(3,1, figsize=(65, 15))
+			masked_arr = np.ma.array(res_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+
+			axs[0].set_title('Prediction', fontsize = 15)
+			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[0])
+
+			axs[1].set_title('Reconstructed', fontsize = 15)
+			cf = axs[1].imshow(test_dPdx[0,:,:,0], interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[1])
+
+			axs[2].set_title('Ground truth', fontsize = 15)
+			cf = axs[2].imshow(test_dPdx[0,:,:,0], interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[2])
+
+			plt.show()
+
+			fig, axs = plt.subplots(3,1, figsize=(65, 15))
+			masked_arr = np.ma.array(res_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+
+			axs[0].set_title('Prediction', fontsize = 15)
+			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[0])
+
+			axs[1].set_title('Prediction', fontsize = 15)
+			cf = axs[1].imshow(test_dPdy[0,:,:,0], interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[1])
+
+			plt.show()
 
 			gradP = np.concatenate([res_dPdx, res_dPdy], axis = -1)
 			
@@ -526,38 +564,15 @@ class Evaluation():
 				if show_plots:
 					plt.show()
 
+				# Uncomment this part to test the integration method, this should give the correct pressure field since it is using test grad(P)
 
-				# field = test_dPdy 
-
-				# masked_arr = np.ma.array(field[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-				# fig, axs = plt.subplots(3,1, figsize=(65, 15))
-
-				# vmax = np.max(grid[0,:,:,4])
-				# vmin = np.min(grid[0,:,:,4])
-
-				# axs[0].set_title('Prediction', fontsize = 15)
-				# cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-				# plt.colorbar(cf, ax=axs[0])
-
-				# masked_arr = np.ma.array(grid[0,:,:,4], mask=(grid[0,:,:,2] == 0))
-
-				# axs[1].set_title('CFD', fontsize = 15)
-				# cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin)
-				# plt.colorbar(cf, ax=axs[1])
-
-				# masked_arr = np.ma.array( np.abs(( grid[0,:,:,4] -field )/(np.max(grid[0,:,:,4]) -np.min(grid[0,:,:,4]))*100) , mask=(grid[0,:,:,2] == 0))
-
-				# axs[2].set_title('error in %', fontsize = 15)
-				# cf = axs[2].imshow(masked_arr, interpolation='nearest', cmap='jet', vmax = 10, vmin=0 )
-				# plt.colorbar(cf, ax=axs[2])
-
-				# if show_plots:
-				# 	plt.show()
+				# ...
 
 				plt.savefig('plots/' + str(i) + '.png')
 				plt.close()
 
 			############## ------------------//------------------##############################
+
 
 			# true_mask = grid[0,:,:,3][grid[0,:,:,2] != 0]
 			# pred_mask = result_array[0,:,:,0][grid[0,:,:,2] != 0]
@@ -601,7 +616,7 @@ def main():
 	delta = 5e-3
 	model_directory = 'model.h5'
 	shape = 128
-	avance = int(0.5*shape)
+	avance = int(0.75*shape)
 	var_p = 0.95
 	var_in = 0.995
 	#hdf5_path = '' #dataset path

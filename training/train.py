@@ -287,7 +287,6 @@ class Training:
           p = data_limited[...,2:3] #values
           p_interp = self.interpolate_fill(p, vert, weights) 
         
-
           for (step, x_y) in enumerate(xy0):  
               if domain_bool[step] * (~np.isnan(p_interp[step])) :
                   jj = int(round((x_y[...,0] - x0) / dx))
@@ -307,8 +306,8 @@ class Training:
 
             data_limited = data[i,j,:indice,:]#[mask_x]
 
-            dPdx = data_limited[...,2:3] #values
-            dPdy = data_limited[...,3:4] #values
+            dPdx = data_limited[...,6:7] #values
+            dPdy = data_limited[...,7:8] #values
             Ux = data_limited[...,0:1] #values
             Uy = data_limited[...,1:2] #values
 
@@ -374,7 +373,8 @@ class Training:
             max_abs_dist.append(np.max(np.abs(obst_array[...,0])))
 
             for step in range(y_array.shape[0]):
-              y_array[step,...][obst_array[step,...,0] != 0] -= np.mean(y_array[step,...,0][obst_array[step,...,0] != 0])
+              y_array[step,...,0][obst_array[step,...,0] != 0] -= np.mean(y_array[step,...,0][obst_array[step,...,0] != 0])
+              y_array[step,...,1][obst_array[step,...,0] != 0] -= np.mean(y_array[step,...,1][obst_array[step,...,0] != 0])
 
             max_abs_dPdx.append(np.max(np.abs(y_array[...,0])))
             max_abs_dPdy.append(np.max(np.abs(y_array[...,1])))
@@ -512,7 +512,7 @@ class Training:
 
     N = int(self.Nsamples * (self.numSimsCil)) # +self.numSimsRect + self.numSimsTria + self.numSimsPlate))
 
-    chunk_size = int(N/1)
+    chunk_size = int(N/20)
     print('Passing the PCA ' + str(N//chunk_size) + ' times', flush = True)
 
     for i in range(int(N//chunk_size)):
@@ -784,7 +784,7 @@ def main():
   num_sims_tria = 1   #used 12
   num_sims_placa = 1  #used 14
   numSims = [num_sims_cil]#, num_sims_rect, num_sims_tria, num_sims_placa]
-  numTimeFrames = 10     #used 100
+  numTimeFrames = 50     #used 100
 
   # TRAINing PARAMETERS
 
@@ -793,16 +793,16 @@ def main():
   lr = 1e-4
   beta = 0.99
   batch_size = 1024#*8
-  model_name = '1'
+  model_name = ''
 
   # DATA-Processing PARAMETERS
 
-  Nsamples = int(1e3/(num_sims_cil))# +num_sims_rect+num_sims_tria+num_sims_placa))
+  Nsamples = int(2.5e4/(num_sims_cil))# +num_sims_rect+num_sims_tria+num_sims_placa))
   block_size = 128
   delta = 5e-3
   modes_PCA = 512
   var_p = 0.95
-  var_in = 0.995
+  var_in = 0.95
 
   # # #if not prepare data ##############################
   # ipca_p = pk.load(open("ipca_p_more.pkl",'rb'))
