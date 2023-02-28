@@ -153,13 +153,9 @@ class Training:
 
   def read_dataset(self):
 
-      #self.numSimsCil, self.numSimsRect, self.numSimsTria , self.numSimsPlate = self.numSims[0], self.numSims[1], self.numSims[2], self.numSims[3] 
-      self.numSimsCil = self.numSims[0]
-
       #pathCil, pathRect, pathTria , pathPlate = self.paths[0], self.paths[1], self.paths[2], self.paths[3]
       pathCil = self.paths[0]
 
-      self.filename = 'outarray.h5'
       NUM_COLUMNS = 5
 
       file = tables.open_file(self.filename, mode='w')
@@ -392,9 +388,6 @@ class Training:
       self.max_abs_dPdy = np.max(np.abs(max_abs_dPdy))
 
       np.savetxt('maxs', [self.max_abs_Ux, self.max_abs_Uy, self.max_abs_dist, self.max_abs_dPdx, self.max_abs_dPdy] )
-
-      split = 0.9
-      self.len_train = int(split*x_array.shape[0])
           
       return 0
 
@@ -485,25 +478,14 @@ class Training:
     assert len(a) == len(b)
     p = np.random.permutation(len(a))
     return a[p], b[p]
-      
-  def prepare_data (self, hdf5_paths, num_principal_comp ):
-
-    #load data
-
-    print_shape = True
-    self.read_dataset()
-
-    ##  PCA Part
-
-    filename_flat = 'outarray_flat.h5'
+  
+  def apply_PCA(self, filename_flat, num_principal_comp):
 
     file = tables.open_file(filename_flat, mode='w')
     atom = tables.Float32Atom()
 
     file.create_earray(file.root, 'data_flat', atom, (0, num_principal_comp, 2))
     file.close()
-
-    import pickle as pk
 
     client = dask.distributed.Client(processes=False)#, n_workers=16)
 
@@ -512,7 +494,7 @@ class Training:
 
     N = int(self.Nsamples * (self.numSimsCil)) # +self.numSimsRect + self.numSimsTria + self.numSimsPlate))
 
-    chunk_size = int(N/20)
+    chunk_size = int(N/4)
     print('Passing the PCA ' + str(N//chunk_size) + ' times', flush = True)
 
     for i in range(int(N//chunk_size)):
@@ -524,7 +506,7 @@ class Training:
       f.close()
 
       if x_array.shape[0] < num_principal_comp:
-        print('chunck too small ... , skipping')
+        print('This chunck too small ... skipping')
         break
 
       x_array_flat = x_array.reshape((x_array.shape[0], x_array.shape[1]*x_array.shape[2], 2 ))
@@ -556,7 +538,7 @@ class Training:
       self.ipca_input.partial_fit(inputScaled)
       self.ipca_p.partial_fit(yScaled)
 
-      print('fitted ' + str(i+1) + '/' + str(N//chunk_size), flush = True)
+      print('Fitted ' + str(i+1) + '/' + str(N//chunk_size), flush = True)
     
     self.PC_p = int(np.argmax(self.ipca_p.explained_variance_ratio_.cumsum() > self.var_p))
     self.PC_input = int(np.argmax(self.ipca_input.explained_variance_ratio_.cumsum() > self.var_in))
@@ -565,10 +547,10 @@ class Training:
     print('PC_input :' + str(self.PC_input), flush = True)
 
     print(' Total variance from input represented: ' + str(np.sum(self.ipca_input.explained_variance_ratio_[:self.PC_input])))
-    pk.dump(self.ipca_input, open("ipca_input_more.pkl","wb"))
+    pk.dump(self.ipca_input, open("ipca_input.pkl","wb"))
 
     print(' Total variance from p represented: ' + str(np.sum(self.ipca_p.explained_variance_ratio_[:self.PC_p])))
-    pk.dump(self.ipca_p, open("ipca_p_more.pkl","wb"))
+    pk.dump(self.ipca_p, open("ipca_p.pkl","wb"))
 
     for i in range(int(N//chunk_size)):
 
@@ -615,6 +597,35 @@ class Training:
 
     client.close()
     
+  def prepare_data (self, hdf5_paths, num_principal_comp):
+
+    #load data
+
+    print_shape = True
+
+    #self.numSimsCil, self.numSimsRect, self.numSimsTria , self.numSimsPlate = self.numSims[0], self.numSims[1], self.numSims[2], self.numSims[3] 
+    self.numSimsCil = self.numSims[0]
+    self.filename = 'outarray.h5'
+      
+    if not (os.path.isfile('outarray.h5') and os.path.isfile('maxs')):
+      self.read_dataset()
+    else:
+      maxs = np.loadtxt('maxs')
+      self.max_abs_Ux, self.max_abs_Uy, self.max_abs_dist, self.max_abs_dPdx, self.max_abs_dPdy = maxs[0], maxs[1], maxs[2], maxs[3], maxs[4]
+      
+    filename_flat = 'outarray_flat.h5'
+
+    if not (os.path.isfile(filename_flat) and os.path.isfile('ipca_input.pkl') and os.path.isfile('ipca_p.pkl')):
+      print('Applying PCA \n')
+      self.apply_PCA(filename_flat, num_principal_comp)
+    else:
+      print('Data after PCA is available, load it and stepping over the PC analysis \n')
+      self.ipca_p = pk.load(open("ipca_p.pkl",'rb'))
+      self.ipca_input = pk.load(open("ipca_input.pkl",'rb'))
+
+      self.PC_p = int(np.argmax(self.ipca_p.explained_variance_ratio_.cumsum() > self.var_p))
+      self.PC_input = int(np.argmax(self.ipca_input.explained_variance_ratio_.cumsum() > self.var_in))
+
     f = tables.open_file(filename_flat, mode='r')
     input = f.root.data_flat[...,:self.PC_input,0] 
     output = f.root.data_flat[...,:self.PC_p,1] 
@@ -643,8 +654,10 @@ class Training:
     # Convert values to compatible tf.Example types.
 
     split = 0.9
-    count = self.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data_more")
-    count = self.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data_more")
+    count = self.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data")
+    count = self.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
+
+    self.len_train = int(split*x.shape[0])
 
     return 0 
 
@@ -709,13 +722,13 @@ class Training:
 
   def load_data_And_train(self, lr, batch_size, num_principal_comp, model_name, beta_1, num_epoch):
 
-    train_path = 'train_data_more.tfrecords'
-    test_path = 'test_data_more.tfrecords'
+    train_path = 'train_data.tfrecords'
+    test_path = 'test_data.tfrecords'
 
     self.train_dataset = self.load_dataset(filename = train_path, batch_size= batch_size, buffer_size=1024)
     self.test_dataset = self.load_dataset(filename = test_path, batch_size= batch_size, buffer_size=1024)
 
-    #training 
+    # Training 
 
     self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=beta_1, beta_2=0.999, epsilon=1e-08)#, decay=0.45*lr, amsgrad=True)
     self.loss_object = self.my_mse_loss()
@@ -784,7 +797,7 @@ def main():
   num_sims_tria = 1   #used 12
   num_sims_placa = 1  #used 14
   numSims = [num_sims_cil]#, num_sims_rect, num_sims_tria, num_sims_placa]
-  numTimeFrames = 50     #used 100
+  numTimeFrames = 20     #used 100
 
   # TRAINing PARAMETERS
 
@@ -793,31 +806,20 @@ def main():
   lr = 1e-4
   beta = 0.99
   batch_size = 1024#*8
-  model_name = ''
+  model_name = '1'
 
   # DATA-Processing PARAMETERS
 
-  Nsamples = int(2.5e4/(num_sims_cil))# +num_sims_rect+num_sims_tria+num_sims_placa))
+  Nsamples = int(1e4/(num_sims_cil))# +num_sims_rect+num_sims_tria+num_sims_placa))
   block_size = 128
   delta = 5e-3
   modes_PCA = 512
   var_p = 0.95
   var_in = 0.95
 
-  # # #if not prepare data ##############################
-  # ipca_p = pk.load(open("ipca_p_more.pkl",'rb'))
-  # ipca_input = pk.load(open("ipca_input_more.pkl",'rb'))
-
-  # PC_input = np.argmax(ipca_input.explained_variance_ratio_.cumsum() > 0.995)
-  # PC_input = int(PC_input)
-  # PC_p = np.argmax(ipca_p.explained_variance_ratio_.cumsum() > 0.95)
-  # PC_p = int(PC_p)
-  # maxs_PCA = np.loadtxt('maxs_PCA')
-  # max_abs_input_PCA, max_abs_p_PCA = maxs_PCA[0], maxs_PCA[1]
-  ################# ------//------------ #######################
-
   Train = Training(delta, block_size,var_p, var_in, paths, Nsamples, numSims, numTimeFrames)
 
+  # If you want to read the crude dataset again, delete the 'outarray.h5' file
   Train.prepare_data (paths, modes_PCA) #prepare and save data to tf records
   Train.load_data_And_train(lr, batch_size, modes_PCA, model_name, beta, num_epoch)
 
