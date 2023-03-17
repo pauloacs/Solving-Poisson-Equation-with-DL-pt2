@@ -31,7 +31,19 @@ import scipy.ndimage as ndimage
 from scipy import interpolate
 
 class Evaluation():
-	def __init__(self, delta, shape, avance, var_p, var_in, hdf5_path, model_directory):
+	def __init__(self, delta, shape, avance, var_p, var_in, hdf5_path, model_path):
+		"""
+		Initialize Evaluation class. 
+
+        Args:
+            delta (float): 
+            shape (int): 
+            avance (float): 
+			var_p (float): 
+			var_in (float): 
+			hdf5_path (str):
+			model_path (str):
+        """
 		self.delta = delta
 		self.shape = shape
 		self.avance = avance
@@ -46,17 +58,21 @@ class Evaluation():
 		self.max_abs_input_PCA, self.max_abs_output_PCA = maxs_PCA[0], maxs_PCA[1]
 
 		#### loading the model #######
-		self.model = tf.keras.models.load_model(model_directory)
-
+		self.model = tf.keras.models.load_model(model_path)
+		print(self.model.summary())
+		
 		### loading the pca matrices for transformations ###
-		self.pcainput = pk.load(open("ipca_input_more.pkl",'rb'))
-		self.pcap = pk.load(open("ipca_p_more.pkl",'rb'))
+		self.pcainput = pk.load(open("ipca_input.pkl",'rb'))
+		self.pcap = pk.load(open("ipca_p.pkl",'rb'))
 
 		self.pc_p = np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) if np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) > 1 and np.argmax(self.pcap.explained_variance_ratio_.cumsum() > 0.95) <= 128 else 128  #max defined to be 32 here
 		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > 0.995) <= 128 else 128
 
 
 	def interp_weights(self, xyz, uvw):
+		"""
+		Add docstring 
+		"""
 		d = 2 #2d interpolation
 		tri = qhull.Delaunay(xyz)
 		simplex = tri.find_simplex(uvw)
@@ -67,16 +83,30 @@ class Evaluation():
 		return vertices, np.hstack((bary, 1 - bary.sum(axis=1, keepdims=True)))
 
 	def interpolate(self, values, vtx, wts):
+		"""
+		Add docstring 
+		"""
 		return np.einsum('nj,nj->n', np.take(values, vtx), wts)
 
 	def interpolate_fill(self, values, vtx, wts, fill_value=np.nan):
+		"""
+		Add docstring 
+		"""
 		ret = np.einsum('nj,nj->n', np.take(values, vtx), wts)
 		ret[np.any(wts < 0, axis=1)] = fill_value
 		return ret
 
 	
-	def create_uniform_grid(self, x_min, x_max,y_min,y_max): #creates a uniform quadrangular grid envolving every cell of the mesh
+	def create_uniform_grid(self, x_min, x_max, y_min, y_max): #creates a uniform quadrangular grid envolving every cell of the mesh
+		"""
+		Creates an uniform 2D grid.
 
+        Args:
+            x_min (float): 
+            x_max (int): 
+            y_min (float): 
+			y_max (float): 
+		"""
 		X0 = np.linspace(x_min + self.delta/2 , x_max - self.delta/2 , num = int(round( (x_max - x_min)/self.delta )) )
 		Y0 = np.linspace(y_min + self.delta/2 , y_max - self.delta/2 , num = int(round( (y_max - y_min)/self.delta )) )
 
@@ -93,8 +123,15 @@ class Evaluation():
 		# If no item was found return None, other return types might be a problem due to
 		# numbas type inference.
 
-	def read_dataset(self, path, sim , time):
+	def read_dataset(self, path, sim, time):
+		"""
+		Add docstring 
 
+		Args:
+			path
+			sim
+			time
+		"""
 		hdf5_file = h5py.File(path, "r")
 		data = hdf5_file["sim_data"][sim:sim+1,time:time+1, ...]
 		top_boundary = hdf5_file["top_bound"][sim:sim+1, time:time+1 , ...]
@@ -103,7 +140,11 @@ class Evaluation():
 		return data, top_boundary, obst_boundary
 
 	def computeOnlyOnce(self, sim):
-
+		"""
+		
+		Args:
+			sim (int):
+		"""
 		time = 0
 		data, top_boundary, obst_boundary = self.read_dataset(self.hdf5_path, sim , time)
 
@@ -190,7 +231,17 @@ class Evaluation():
 		return 0
 
 	def assemble_prediction(self, field, array, indices_list, n_x, n_y, apply_filter, shape_x, shape_y):
-
+		"""
+		Args:
+			field
+			array
+			indices_list
+			n_x
+			n_y
+			apply_filter
+			shape_x
+			shape_y 
+		"""
 		avance = self.avance
 		shape = self.shape
 		Ref_BC = self.Ref_BC
@@ -297,6 +348,17 @@ class Evaluation():
 		return result
 
 	def integrate_field(self, block, xl, yl, direction_x=1, direction_y=1):
+		"""
+		
+		Args:
+			block
+			xl
+			yl
+			direction_x
+			direction_y
+		
+		"""
+
 		to_cumsum_dPdx = block[...,0].copy()
 		to_cumsum_dPdy = block[...,1].copy()
 
@@ -332,7 +394,9 @@ class Evaluation():
 		return Phat
 
 	def timeStep(self, sim, time, save_plots, show_plots, apply_filter):
-
+		"""
+		Add docstring 
+		"""
 			data, top_boundary, obst_boundary = self.read_dataset(self.hdf5_path, sim , time)
 			i = 0
 			j = 0
@@ -375,9 +439,6 @@ class Evaluation():
 			grid[0,:,:,2:3] = grid[0,:,:,2:3]/self.max_abs_dist
 			grid[0,:,:,3:4] = grid[0,:,:,3:4]/self.max_abs_dPdx
 			grid[0,:,:,4:5] = grid[0,:,:,4:5]/self.max_abs_dPdy
-
-		#	plt.imshow(grid[0,:,:,2] != 0 )
-		#	plt.show()
 
 			#create data to pass in the model:
 			x_list = []
@@ -460,37 +521,34 @@ class Evaluation():
 			################## ----------------//---------------####################################
 
 			
-			# Plotting intermidiate fields: dP/dx and dP/dy
+			# Plotting intermediate fields: dP/dx and dP/dy
 
-			fig, axs = plt.subplots(3,1, figsize=(65, 15))
+			fig, axs = plt.subplots(2,1, figsize=(65, 15))
+
 			masked_arr = np.ma.array(res_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-
-			axs[0].set_title('Prediction', fontsize = 15)
+			axs[0].set_title('dp/dx predicted', fontsize = 15)
 			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
 			plt.colorbar(cf, ax=axs[0])
 
-			axs[1].set_title('Reconstructed', fontsize = 15)
-			cf = axs[1].imshow(test_dPdx[0,:,:,0], interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			masked_arr = np.ma.array(test_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+			axs[1].set_title('Ground truth', fontsize = 15)
+			cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
 			plt.colorbar(cf, ax=axs[1])
 
-			axs[2].set_title('Ground truth', fontsize = 15)
-			cf = axs[2].imshow(test_dPdx[0,:,:,0], interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-			plt.colorbar(cf, ax=axs[2])
-
-			plt.show()
-
-			fig, axs = plt.subplots(3,1, figsize=(65, 15))
+			fig, axs = plt.subplots(2,1, figsize=(65, 15))
+			
 			masked_arr = np.ma.array(res_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-
-			axs[0].set_title('Prediction', fontsize = 15)
+			axs[0].set_title('dp/dy predicted', fontsize = 15)
 			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
 			plt.colorbar(cf, ax=axs[0])
 
-			axs[1].set_title('Prediction', fontsize = 15)
-			cf = axs[1].imshow(test_dPdy[0,:,:,0], interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			masked_arr = np.ma.array(test_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+			axs[1].set_title('Ground truth', fontsize = 15)
+			cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
 			plt.colorbar(cf, ax=axs[1])
 
-			plt.show()
+			if show_plots:
+				plt.show()
 
 			gradP = np.concatenate([res_dPdx, res_dPdy], axis = -1)
 			
@@ -545,13 +603,13 @@ class Evaluation():
 				vmax = np.max(grid[0,:,:,5])
 				vmin = np.min(grid[0,:,:,5])
 
-				axs[0].set_title('Prediction', fontsize = 15)
+				axs[0].set_title('p predicted', fontsize = 15)
 				cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
 				plt.colorbar(cf, ax=axs[0])
 
 				masked_arr = np.ma.array(grid[0,:,:,5], mask=(grid[0,:,:,2] == 0))
 
-				axs[1].set_title('CFD', fontsize = 15)
+				axs[1].set_title('CFD results', fontsize = 15)
 				cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin)
 				plt.colorbar(cf, ax=axs[1])
 
@@ -599,7 +657,6 @@ class Evaluation():
 			return 0
 
 	
-
 def main():
 
 	### THis creates a directory to save the plots
@@ -614,18 +671,16 @@ def main():
 
 	###### inputs ########
 	delta = 5e-3
-	model_directory = 'model.h5'
+	model_directory = 'model_1.h5'
 	shape = 128
 	avance = int(0.75*shape)
 	var_p = 0.95
-	var_in = 0.995
-	#hdf5_path = '' #dataset path
+	var_in = 0.95
 	hdf5_path = '../training/dataset_gradP_cil.hdf5' #adjust dataset path
 
 	save_plots = True
-	show_plots = True
+	show_plots = False
 	apply_filter = False
-
 
 	Eval = Evaluation(delta, shape, avance, var_p, var_in, hdf5_path, model_directory)
 	Eval.pred_minus_true = []
@@ -634,11 +689,8 @@ def main():
 	sims = [ 0, 3, 6, 8 ] #phi 0.5, 0.8, 1.1, 1.4
 
 	for sim in sims:
-		
 		Eval.computeOnlyOnce(sim)
-
 		for time in range(10):
-
 			Eval.timeStep(sim*10, time, save_plots, show_plots, apply_filter)
 
 	#np.savetxt('errors', error)
