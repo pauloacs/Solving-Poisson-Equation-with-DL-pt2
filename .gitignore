@@ -5,3 +5,5 @@ outarray.h5
 *.tfrecords
 *.pkl
 *.hdf5
+maxs*
+plots
