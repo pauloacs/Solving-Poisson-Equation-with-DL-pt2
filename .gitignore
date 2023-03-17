@@ -7,3 +7,4 @@ outarray.h5
 *.hdf5
 maxs*
 plots
+dask*
