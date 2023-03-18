@@ -71,7 +71,11 @@ class Evaluation():
 
 	def interp_weights(self, xyz, uvw):
 		"""
-		Add docstring 
+		Gets the interpolation's verticies and weights from xyz to uvw.
+
+		Args:
+			xyz (NDArray): Original array of coordinates.
+			uvw (NDArray): Target array of coordinates
 		"""
 		d = 2 #2d interpolation
 		tri = qhull.Delaunay(xyz)
@@ -84,28 +88,39 @@ class Evaluation():
 
 	def interpolate(self, values, vtx, wts):
 		"""
-		Add docstring 
+		Interpolate based on previously computed vertices (vtx) and weights (wts).
+
+		Args:
+			values (NDArray): Array of values to interpolate.
+			vtx (NDArray): Array of interpolation vertices.
+			wts (NDArray): Array of interpolation weights.
 		"""
 		return np.einsum('nj,nj->n', np.take(values, vtx), wts)
 
 	def interpolate_fill(self, values, vtx, wts, fill_value=np.nan):
 		"""
-		Add docstring 
+		Interpolate based on previously computed vertices (vtx) and weights (wts) and fill.
+
+		Args:
+			values (NDArray): Array of values to interpolate.
+			vtx (NDArray): Array of interpolation vertices.
+			wts (NDArray): Array of interpolation weights.
+			fill_value (float): Value used to fill.
 		"""
 		ret = np.einsum('nj,nj->n', np.take(values, vtx), wts)
 		ret[np.any(wts < 0, axis=1)] = fill_value
 		return ret
 
 	
-	def create_uniform_grid(self, x_min, x_max, y_min, y_max): #creates a uniform quadrangular grid envolving every cell of the mesh
+	def create_uniform_grid(self, x_min, x_max, y_min, y_max):
 		"""
-		Creates an uniform 2D grid.
+		Creates an uniform 2D grid (should envolve every cell of the mesh).
 
         Args:
-            x_min (float): 
-            x_max (int): 
-            y_min (float): 
-			y_max (float): 
+            x_min (float): Self-explanatory.
+            x_max (float): Self-explanatory.
+            y_min (float): Self-explanatory.
+			y_max (float): Self-explanatory.
 		"""
 		X0 = np.linspace(x_min + self.delta/2 , x_max - self.delta/2 , num = int(round( (x_max - x_min)/self.delta )) )
 		Y0 = np.linspace(y_min + self.delta/2 , y_max - self.delta/2 , num = int(round( (y_max - y_min)/self.delta )) )
@@ -113,8 +128,15 @@ class Evaluation():
 		XX0, YY0 = np.meshgrid(X0,Y0)
 		return XX0.flatten(), YY0.flatten()
 
-	#@njit(nopython = True)  #much faster using numba.njit but is giving a bug
+	#@njit(nopython = True)  #much faster using numba.njit but is giving an error
 	def index(self, array, item):
+		"""
+		Finds the index of the first element equal to item.
+
+		Args:
+			array (NDArray):
+			item (float):
+		"""
 		for idx, val in np.ndenumerate(array):
 			if val == item:
 				return idx
@@ -125,39 +147,37 @@ class Evaluation():
 
 	def read_dataset(self, path, sim, time):
 		"""
-		Add docstring 
+		Reads dataset and splits it into the internal flow data (data) and boundary data.
 
 		Args:
-			path
-			sim
-			time
+			path (str): Path to hdf5 dataset
+			sim (int): Simulation number.
+			time (int): Time frame.
 		"""
-		hdf5_file = h5py.File(path, "r")
-		data = hdf5_file["sim_data"][sim:sim+1,time:time+1, ...]
-		top_boundary = hdf5_file["top_bound"][sim:sim+1, time:time+1 , ...]
-		obst_boundary = hdf5_file["obst_bound"][sim:sim+1, time:time+1 , ...]
-		hdf5_file.close()
+		with h5py.File(path, "r") as f:
+			data = hdf5_file["sim_data"][sim:sim+1,time:time+1, ...]
+			top_boundary = hdf5_file["top_bound"][sim:sim+1, time:time+1 , ...]
+			obst_boundary = hdf5_file["obst_bound"][sim:sim+1, time:time+1 , ...]
 		return data, top_boundary, obst_boundary
 
 	def computeOnlyOnce(self, sim):
 		"""
-		
+		Performs interpolation from the OF grid (corresponding to the mesh cell centers),
+		saves the intepolation vertices and weights and computes the signed distance function (sdf).
+
 		Args:
-			sim (int):
+			sim (int): Simulation number.
 		"""
 		time = 0
 		data, top_boundary, obst_boundary = self.read_dataset(self.hdf5_path, sim , time)
 
-		#arrange data in array:
+		self.indice = self.index(data[0,0,:,0] , -100.0 )[0]
 
-		i = 0
-		self.indice = self.index(data[i,0,:,0] , -100.0 )[0]
+		x_min = round(np.min(data[0,0,...,:self.indice,3]),2) 
+		x_max = round(np.max(data[0,0,...,:self.indice,3]),2) 
 
-		x_min = round(np.min(data[i,0,...,:self.indice,3]),2) 
-		x_max = round(np.max(data[i,0,...,:self.indice,3]),2) 
-
-		y_min = round(np.min(data[i,0,...,:self.indice,4]),2)  #- 0.3
-		y_max = round(np.max(data[i,0,...,:self.indice,4]),2)  #+ 0.3
+		y_min = round(np.min(data[0,0,...,:self.indice,4]),2)  #- 0.3
+		y_max = round(np.max(data[0,0,...,:self.indice,4]),2)  #+ 0.3
 
 		######### -------------------- Assuming constant mesh, the following can be done out of the for cycle ------------------------------- ##########
 
@@ -178,9 +198,10 @@ class Evaluation():
 		indice_obst = self.index(obst_boundary[i,0,:,0] , -100.0 )[0]
 		obst = obst_boundary[i,0,:indice_obst,:]
 
-		obst_points =  MultiPoint(obst)
+		obst_points = MultiPoint(obst)
 
-		hull = obst_points.convex_hull       #only works for convex geometries
+		# This only works for convex geometries
+		hull = obst_points.convex_hull  
 		hull_pts = hull.exterior.coords.xy  
 		hull_pts = np.c_[hull_pts[0], hull_pts[1]]
 
@@ -232,6 +253,8 @@ class Evaluation():
 
 	def assemble_prediction(self, field, array, indices_list, n_x, n_y, apply_filter, shape_x, shape_y):
 		"""
+		Reconstructs the flow domain based on squared blocks.
+
 		Args:
 			field
 			array
@@ -264,12 +287,10 @@ class Evaluation():
 
 			if idx_i == 0: # first row
 				if i == 0:
-					
 					if field == 'dp_dx': # using inlet boundary condition
 						BC_coor = np.mean(pred_field[:,0][flow_bool[:,0]!=0]) - Ref_BC # setting here the reference BC 
 					elif field == 'dp_dy': # using top wall boundary condition
 						BC_coor = np.mean(pred_field[1,:][flow_bool[1,:]!=0]) - Ref_BC  # i = 0 sits outside the inclusion zone
-
 				else:
 					BC_ant_0 = np.mean(old_pred_field[:,-avance:][flow_bool[:,-avance:] !=0]) 
 					BC_coor = np.mean(pred_field[:,:avance][flow_bool[:,:avance]!=0]) - BC_ant_0
@@ -277,7 +298,6 @@ class Evaluation():
 					intersect_zone_limit = avance - p_j
 					BC_ant_0 = np.mean(old_pred_field[:,-intersect_zone_limit:][flow_bool[:,-intersect_zone_limit:] !=0]) 
 					BC_coor = np.mean(pred_field[:,:intersect_zone_limit][flow_bool[:,:intersect_zone_limit]!=0]) - BC_ant_0
-			
 				pred_field -= BC_coor
 				BC_ups[idx_j] = np.mean(pred_field[-avance:,:][flow_bool[-avance:,:] !=0])
 
@@ -292,7 +312,6 @@ class Evaluation():
 						BC_coor = np.mean(pred_field[:,:avance][flow_bool[:,:avance]!=0]) - BC_ant_0											
 				else:
 					BC_coor = np.mean(pred_field[:avance,:][flow_bool[:avance,:]!=0]) - BC_ups[idx_j]
-			
 				pred_field -= BC_coor
 				BC_ups[idx_j] = np.mean(pred_field[-avance:,:][flow_bool[-avance:,:] !=0])
 				if idx_i == n_y:
@@ -316,25 +335,16 @@ class Evaluation():
 			if [idx_i, idx_j] == [n_y + 1, n_x]:
 				result[0,(shape_y-(shape-avance)):shape_y , -intersect_zone_limit: ,0] = pred_field[avance:shape , -intersect_zone_limit:]
 				#print([ (shape_y-(shape-avance)),shape_y , shape_x-intersect_zone_limit, shape_x])
-
 			elif idx_j == n_x:
 				#print([(idx_i*shape - idx_i*avance),(1+idx_i)*shape - idx_i*avance, shape_x-intersect_zone_limit, shape_x])
 				result[0,(idx_i*shape - idx_i*avance):(1+idx_i)*shape - idx_i*avance,-intersect_zone_limit:,0] = pred_field[:,-intersect_zone_limit:]
-
 			elif idx_i == (n_y + 1):
-
 				#print((shape_y-(shape-avance)), shape_y, idx_j*(shape-avance), shape + idx_j*(shape-avance))
 				result[0,(shape_y-(shape-avance)):shape_y, idx_j*(shape-avance) : shape + idx_j*(shape-avance) ,0] = pred_field[avance:shape,:]
-
 			else:
 				#print(((idx_i*shape - idx_i*avance), (1+idx_i)*shape - idx_i*avance, idx_j*(shape-avance), shape + idx_j*(shape-avance)))
 				result[0,(idx_i*shape - idx_i*avance):(1+idx_i)*shape - idx_i*avance, idx_j*(shape-avance) : shape + idx_j*(shape-avance) ,0] = pred_field
 			
-			#import pdb; pdb.set_trace()
-
-			# masked_arr = np.ma.array(result[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-
-
 		if field == 'dp_dx':
 			result -= np.mean( 3* result[:,:,0,:] - result[:,:,1,:] )/3
 		elif field == 'dp_dy':
@@ -349,13 +359,14 @@ class Evaluation():
 
 	def integrate_field(self, block, xl, yl, direction_x=1, direction_y=1):
 		"""
-		
+		Integrate {pP/dx, dP/dt} into P(x,y).
+
 		Args:
-			block
-			xl
-			yl
-			direction_x
-			direction_y
+			block (NDArray): 
+			xl (NDArray):
+			yl (NDArray):
+			direction_x (int): 
+			direction_y (int): 
 		
 		"""
 
@@ -395,266 +406,267 @@ class Evaluation():
 
 	def timeStep(self, sim, time, save_plots, show_plots, apply_filter):
 		"""
-		Add docstring 
+
+		Args:
+			sim (int):
+			time (int):
+			save_plots (bool):
+			show_plots (bool):
+			apply_filter
 		"""
-			data, top_boundary, obst_boundary = self.read_dataset(self.hdf5_path, sim , time)
-			i = 0
-			j = 0
-
-			
-			Ux = data[i,j,:self.indice,0:1] #values
-			Uy = data[i,j,:self.indice,1:2] #values
-			p = data[i,j,:self.indice,2:3] #values
-			dPdx = data[i,j,:self.indice,6:7] #values
-			dPdy = data[i,j,:self.indice,7:8] #values
-
-			U_max_norm = np.max(np.sqrt(np.square(Ux) + np.square(Uy))) 
-
-			dPdx_adim = dPdx * (self.max_x - self.min_x)/pow(U_max_norm,2.0) 
-			dPdy_adim = dPdy * (self.max_y - self.min_y)/pow(U_max_norm,2.0) 
-			p_adim = p / pow(U_max_norm,2.0) 
-			Ux_adim = Ux/U_max_norm 
-			Uy_adim = Uy/U_max_norm 
-
-			dPdx_interp = self.interpolate_fill(dPdx_adim, self.vert, self.weights) #compared to the griddata interpolation 
-			dPdy_interp = self.interpolate_fill(dPdy_adim, self.vert, self.weights) #compared to the griddata interpolation 
-			p_interp = self.interpolate_fill(p_adim, self.vert, self.weights)
-			Ux_interp = self.interpolate_fill(Ux_adim, self.vert, self.weights)#takes virtually no time  because "vert" and "weigths" where already calculated
-			Uy_interp = self.interpolate_fill(Uy_adim, self.vert, self.weights)
-
-			grid = np.zeros(shape=(1, self.grid_shape_y, self.grid_shape_x, 6))
-
-			grid[0,:,:,0:1][tuple(self.indices.T)] = Ux_interp.reshape(Ux_interp.shape[0],1)
-			grid[0,:,:,1:2][tuple(self.indices.T)] = Uy_interp.reshape(Uy_interp.shape[0],1)
-			grid[0,:,:,2:3] = self.sdfunct
-			grid[0,:,:,3:4][tuple(self.indices.T)] = dPdx_interp.reshape(dPdx_interp.shape[0],1)
-			grid[0,:,:,4:5][tuple(self.indices.T)] = dPdy_interp.reshape(dPdy_interp.shape[0],1)
-			grid[0,:,:,5:6][tuple(self.indices.T)] = p_interp.reshape(p_interp.shape[0],1)
-
-
-			grid[np.isnan(grid)] = 0 #set any nan value to 0
-
-			grid[0,:,:,0:1] = grid[0,:,:,0:1]/self.max_abs_Ux
-			grid[0,:,:,1:2] = grid[0,:,:,1:2]/self.max_abs_Uy
-			grid[0,:,:,2:3] = grid[0,:,:,2:3]/self.max_abs_dist
-			grid[0,:,:,3:4] = grid[0,:,:,3:4]/self.max_abs_dPdx
-			grid[0,:,:,4:5] = grid[0,:,:,4:5]/self.max_abs_dPdy
-
-			#create data to pass in the model:
-			x_list = []
-			obst_list = []
-			y_list = []
-			indices_list = []
-
-			avance = self.avance
-			shape = self.shape
-
-			n_x = int(np.ceil((grid.shape[2]-shape)/(shape - avance )) )
-			n_y = int((grid.shape[1]-shape)/(shape - avance ))
-
-			# To work with dPdx should start from the left 
-			#import pdb; pdb.set_trace()
-
-			for i in range ( n_y + 2 ): #+1 b
-				for j in range ( n_x +1 ):
-
-					x_0 = j*shape -j*avance
-					if j == n_x: x_0 = grid.shape[2]-shape
-					x_f = x_0 + shape
-
-					y_0 = i*shape - i*avance
-					if i == n_y + 1: y_0 = grid.shape[1]-shape
-					y_f = y_0 + shape
-
-					x_list.append(grid[0:1, y_0:y_f, x_0:x_f, 0:3])
-					y_list.append(grid[0:1, y_0:y_f, x_0:x_f, 3:5])
-
-					indices_list.append([i,j])
-
-			self.x_array = np.concatenate(x_list)
-			self.y_array = np.concatenate(y_list)
-			y_array = self.y_array
-			N = self.x_array.shape[0]
-			features = self.x_array.shape[3]
-
-			# this is just to check the assembly of the gradients in the physical domain
-			for step in range(y_array.shape[0]):
-				y_array[step,...,0][self.x_array[step,...,2] != 0] -= np.mean(y_array[step,...,0][self.x_array[step,...,2] != 0])
-				y_array[step,...,1][self.x_array[step,...,2] != 0] -= np.mean(y_array[step,...,1][self.x_array[step,...,2] != 0])
-
-			x_array_flat = self.x_array.reshape((N, self.x_array.shape[1]*self.x_array.shape[2], features ))
-			y_array_flat = y_array.reshape((N, y_array.shape[1]*y_array.shape[2], 2))
-			input_flat = x_array_flat.reshape((x_array_flat.shape[0],-1))
-			y_array_flat = y_array_flat.reshape((y_array_flat.shape[0],-1))
-
-			input_transformed = self.pcainput.transform(input_flat)[:,:self.pc_in]
-			print(' Total variance from input represented: ' + str(np.sum(self.pcainput.explained_variance_ratio_[:self.pc_in])))
-			print(input_transformed.shape)
-
-			y_transformed = self.pcap.transform(y_array_flat)[:,:self.pc_p]
-			print(' Total variance from Obst_bool represented: ' + str(np.sum(self.pcap.explained_variance_ratio_[:self.pc_p])))
-
-			x_input = input_transformed/self.max_abs_input_PCA
+	
+		data, top_boundary, obst_boundary = self.read_dataset(self.hdf5_path, sim , time)
+		i = 0
+		j = 0
 		
-			comp = self.pcap.components_
-			pca_mean = self.pcap.mean_
+		Ux = data[i,j,:self.indice,0:1] #values
+		Uy = data[i,j,:self.indice,1:2] #values
+		p = data[i,j,:self.indice,2:3] #values
+		dPdx = data[i,j,:self.indice,6:7] #values
+		dPdy = data[i,j,:self.indice,7:8] #values
 
-			res_concat = np.array(self.model(np.array(x_input)))
-			res_concat *= self.max_abs_output_PCA 
+		U_max_norm = np.max(np.sqrt(np.square(Ux) + np.square(Uy))) 
 
-			res_flat_inv = np.dot(res_concat, comp[:self.pc_p, :]) + pca_mean	
-			res_concat = res_flat_inv.reshape((res_concat.shape[0], shape, shape, 2)) 
+		dPdx_adim = dPdx * (self.max_x - self.min_x)/pow(U_max_norm,2.0) 
+		dPdy_adim = dPdy * (self.max_y - self.min_y)/pow(U_max_norm,2.0) 
+		p_adim = p / pow(U_max_norm,2.0) 
+		Ux_adim = Ux/U_max_norm 
+		Uy_adim = Uy/U_max_norm 
 
-			# Dimensionalize pressure gradient field
-			res_concat[...,0] = res_concat[...,0] #* pow(U_max_norm,2.0)/(self.max_x - self.min_x) * self.max_abs_dPdx
-			res_concat[...,1] = res_concat[...,1] #* pow(U_max_norm,2.0)/(self.max_y - self.min_y) * self.max_abs_dPdy
+		dPdx_interp = self.interpolate_fill(dPdx_adim, self.vert, self.weights) #compared to the griddata interpolation 
+		dPdy_interp = self.interpolate_fill(dPdy_adim, self.vert, self.weights) #compared to the griddata interpolation 
+		p_interp = self.interpolate_fill(p_adim, self.vert, self.weights)
+		Ux_interp = self.interpolate_fill(Ux_adim, self.vert, self.weights)#takes virtually no time  because "vert" and "weigths" where already calculated
+		Uy_interp = self.interpolate_fill(Uy_adim, self.vert, self.weights)
 
-			# the boundary condition is 0 for both dP/dx and dP/dy but at different boundaries
-			self.Ref_BC = 0 
-			
-			# performing the assembly process
-			res_dPdx = self.assemble_prediction('dp_dx', res_concat[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
-			res_dPdy = self.assemble_prediction('dp_dy', res_concat[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
-			test_dPdx = self.assemble_prediction('dp_dy', y_array[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
-			test_dPdy = self.assemble_prediction('dp_dy', y_array[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
-			
-			################## ----------------//---------------####################################
+		grid = np.zeros(shape=(1, self.grid_shape_y, self.grid_shape_x, 6))
 
-			
-			# Plotting intermediate fields: dP/dx and dP/dy
+		grid[0,:,:,0:1][tuple(self.indices.T)] = Ux_interp.reshape(Ux_interp.shape[0],1)
+		grid[0,:,:,1:2][tuple(self.indices.T)] = Uy_interp.reshape(Uy_interp.shape[0],1)
+		grid[0,:,:,2:3] = self.sdfunct
+		grid[0,:,:,3:4][tuple(self.indices.T)] = dPdx_interp.reshape(dPdx_interp.shape[0],1)
+		grid[0,:,:,4:5][tuple(self.indices.T)] = dPdy_interp.reshape(dPdy_interp.shape[0],1)
+		grid[0,:,:,5:6][tuple(self.indices.T)] = p_interp.reshape(p_interp.shape[0],1)
 
-			fig, axs = plt.subplots(2,1, figsize=(65, 15))
 
-			masked_arr = np.ma.array(res_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-			axs[0].set_title('dp/dx predicted', fontsize = 15)
+		grid[np.isnan(grid)] = 0 #set any nan value to 0
+
+		grid[0,:,:,0:1] = grid[0,:,:,0:1]/self.max_abs_Ux
+		grid[0,:,:,1:2] = grid[0,:,:,1:2]/self.max_abs_Uy
+		grid[0,:,:,2:3] = grid[0,:,:,2:3]/self.max_abs_dist
+		grid[0,:,:,3:4] = grid[0,:,:,3:4]/self.max_abs_dPdx
+		grid[0,:,:,4:5] = grid[0,:,:,4:5]/self.max_abs_dPdy
+
+		#create data to pass in the model:
+		x_list = []
+		obst_list = []
+		y_list = []
+		indices_list = []
+
+		avance = self.avance
+		shape = self.shape
+
+		n_x = int(np.ceil((grid.shape[2]-shape)/(shape - avance )) )
+		n_y = int((grid.shape[1]-shape)/(shape - avance ))
+
+		# To work with dPdx should start from the left 
+
+		for i in range ( n_y + 2 ): #+1 b
+			for j in range ( n_x +1 ):
+
+				x_0 = j*shape -j*avance
+				if j == n_x: x_0 = grid.shape[2]-shape
+				x_f = x_0 + shape
+
+				y_0 = i*shape - i*avance
+				if i == n_y + 1: y_0 = grid.shape[1]-shape
+				y_f = y_0 + shape
+
+				x_list.append(grid[0:1, y_0:y_f, x_0:x_f, 0:3])
+				y_list.append(grid[0:1, y_0:y_f, x_0:x_f, 3:5])
+
+				indices_list.append([i,j])
+
+		self.x_array = np.concatenate(x_list)
+		self.y_array = np.concatenate(y_list)
+		y_array = self.y_array
+		N = self.x_array.shape[0]
+		features = self.x_array.shape[3]
+
+		# this is just to check the assembly of the gradients in the physical domain
+		for step in range(y_array.shape[0]):
+			y_array[step,...,0][self.x_array[step,...,2] != 0] -= np.mean(y_array[step,...,0][self.x_array[step,...,2] != 0])
+			y_array[step,...,1][self.x_array[step,...,2] != 0] -= np.mean(y_array[step,...,1][self.x_array[step,...,2] != 0])
+
+		x_array_flat = self.x_array.reshape((N, self.x_array.shape[1]*self.x_array.shape[2], features ))
+		y_array_flat = y_array.reshape((N, y_array.shape[1]*y_array.shape[2], 2))
+		input_flat = x_array_flat.reshape((x_array_flat.shape[0],-1))
+		y_array_flat = y_array_flat.reshape((y_array_flat.shape[0],-1))
+
+		input_transformed = self.pcainput.transform(input_flat)[:,:self.pc_in]
+		print(' Total variance from input represented: ' + str(np.sum(self.pcainput.explained_variance_ratio_[:self.pc_in])))
+		print(input_transformed.shape)
+
+		y_transformed = self.pcap.transform(y_array_flat)[:,:self.pc_p]
+		print(' Total variance from Obst_bool represented: ' + str(np.sum(self.pcap.explained_variance_ratio_[:self.pc_p])))
+
+		x_input = input_transformed/self.max_abs_input_PCA
+	
+		comp = self.pcap.components_
+		pca_mean = self.pcap.mean_
+
+		res_concat = np.array(self.model(np.array(x_input)))
+		res_concat *= self.max_abs_output_PCA 
+
+		res_flat_inv = np.dot(res_concat, comp[:self.pc_p, :]) + pca_mean	
+		res_concat = res_flat_inv.reshape((res_concat.shape[0], shape, shape, 2)) 
+
+		# Dimensionalize pressure gradient field
+		res_concat[...,0] = res_concat[...,0] #* pow(U_max_norm,2.0)/(self.max_x - self.min_x) * self.max_abs_dPdx
+		res_concat[...,1] = res_concat[...,1] #* pow(U_max_norm,2.0)/(self.max_y - self.min_y) * self.max_abs_dPdy
+
+		# the boundary condition is 0 for both dP/dx and dP/dy but at different boundaries
+		self.Ref_BC = 0 
+		
+		# performing the assembly process
+		res_dPdx = self.assemble_prediction('dp_dx', res_concat[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
+		res_dPdy = self.assemble_prediction('dp_dy', res_concat[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
+		test_dPdx = self.assemble_prediction('dp_dy', y_array[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
+		test_dPdy = self.assemble_prediction('dp_dy', y_array[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
+		
+		################## ----------------//---------------####################################
+
+		# Plotting intermediate fields: dP/dx and dP/dy
+
+		fig, axs = plt.subplots(2,1, figsize=(65, 15))
+
+		masked_arr = np.ma.array(res_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+		axs[0].set_title('dp/dx predicted', fontsize = 15)
+		cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+		plt.colorbar(cf, ax=axs[0])
+
+		masked_arr = np.ma.array(test_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+		axs[1].set_title('Ground truth', fontsize = 15)
+		cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+		plt.colorbar(cf, ax=axs[1])
+
+		fig, axs = plt.subplots(2,1, figsize=(65, 15))
+		
+		masked_arr = np.ma.array(res_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+		axs[0].set_title('dp/dy predicted', fontsize = 15)
+		cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+		plt.colorbar(cf, ax=axs[0])
+
+		masked_arr = np.ma.array(test_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+		axs[1].set_title('Ground truth', fontsize = 15)
+		cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+		plt.colorbar(cf, ax=axs[1])
+
+		if show_plots:
+			plt.show()
+
+		gradP = np.concatenate([res_dPdx, res_dPdy], axis = -1)
+		
+		xl = np.linspace(self.min_x, self.max_x, grid.shape[2])
+		yl = np.linspace(self.min_y, self.max_y, grid.shape[1])
+
+		# Dividing the domain into 4 parts
+
+		center_p_x = int((( xl[self.sdfunct[200,:,0] == 0].max() + xl[self.sdfunct[200,:,0] == 0].min() )/2 - self.X0.min()) / self.delta)
+		center_p_y = int(200)
+
+		result = np.empty(gradP[0,:,:,0].shape)
+
+		# block 1 - Upper right
+		block_1 = gradP[0,:center_p_y,center_p_x-1:,:].copy()
+		mask1 = self.sdfunct[:center_p_y,center_p_x-1,0] != 0 
+		pBlock1 = self.integrate_field(block_1, xl, yl, direction_x = -1)
+		result[:center_p_y,center_p_x-1:] = pBlock1#[:,::-1]
+
+		# block 2 - Upper left
+		block_2 = gradP[0,:center_p_y,:center_p_x,:].copy()
+		mask2 = self.sdfunct[:center_p_y,center_p_x,0] != 0 
+		pBlock2 = self.integrate_field(block_2, xl, yl)
+		pBlock2Corrected = pBlock2 - (pBlock2[:,-1][mask2] - pBlock1[:,0][mask1]).mean() 
+		result[:center_p_y,:center_p_x] = pBlock2Corrected
+
+		# block 3 - Lower right
+		block_3 = gradP[0,center_p_y:,center_p_x-1:,:].copy()
+		mask3 = self.sdfunct[center_p_y:,center_p_x-1,0] != 0 
+		pBlock3 = self.integrate_field(block_3, xl, yl, direction_x = -1, direction_y=-1)
+		result[center_p_y:,center_p_x-1:] = pBlock3
+
+		# block 4 - Lower left
+		block_4 = gradP[0,center_p_y:,:center_p_x,:].copy()
+		mask4 = self.sdfunct[center_p_y:,center_p_x,0] != 0 
+		pBlock4 = self.integrate_field(block_4, xl, yl, direction_y=-1)
+		pBlock4Corrected = pBlock4 - (pBlock4[:,-1][mask4] - pBlock3[:,0][mask3]).mean() 
+		result[center_p_y:,:center_p_x] = pBlock4Corrected
+
+		#masked_arr = np.ma.array(result, mask=(grid[0,:,:,2] == 0))
+		#plt.imshow(masked_arr)
+		#plt.colorbar()
+		#plt.show()
+		
+		if save_plots:
+
+			field = result 
+
+			masked_arr = np.ma.array(field, mask=(grid[0,:,:,2] == 0))
+			fig, axs = plt.subplots(3,1, figsize=(65, 15))
+
+			vmax = np.max(grid[0,:,:,5])
+			vmin = np.min(grid[0,:,:,5])
+
+			axs[0].set_title('p predicted', fontsize = 15)
 			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
 			plt.colorbar(cf, ax=axs[0])
 
-			masked_arr = np.ma.array(test_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-			axs[1].set_title('Ground truth', fontsize = 15)
-			cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			masked_arr = np.ma.array(grid[0,:,:,5], mask=(grid[0,:,:,2] == 0))
+
+			axs[1].set_title('CFD results', fontsize = 15)
+			cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin)
 			plt.colorbar(cf, ax=axs[1])
 
-			fig, axs = plt.subplots(2,1, figsize=(65, 15))
-			
-			masked_arr = np.ma.array(res_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-			axs[0].set_title('dp/dy predicted', fontsize = 15)
-			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-			plt.colorbar(cf, ax=axs[0])
+			masked_arr = np.ma.array( np.abs(( grid[0,:,:,5] -field )/(np.max(grid[0,:,:,5]) -np.min(grid[0,:,:,5]))*100) , mask=(grid[0,:,:,2] == 0))
 
-			masked_arr = np.ma.array(test_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-			axs[1].set_title('Ground truth', fontsize = 15)
-			cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-			plt.colorbar(cf, ax=axs[1])
+			axs[2].set_title('error in %', fontsize = 15)
+			cf = axs[2].imshow(masked_arr, interpolation='nearest', cmap='jet', vmax = 10, vmin=0 )
+			plt.colorbar(cf, ax=axs[2])
 
 			if show_plots:
 				plt.show()
 
-			gradP = np.concatenate([res_dPdx, res_dPdy], axis = -1)
-			
-			xl = np.linspace(self.min_x, self.max_x, grid.shape[2])
-			yl = np.linspace(self.min_y, self.max_y, grid.shape[1])
+			plt.savefig('plots/' + str(i) + '.png')
+			plt.close()
 
-			# Dividing the domain into 4 parts
+		############## ------------------//------------------##############################
+		
+		# This part is to output the error metric
 
-			center_p_x = int((( xl[self.sdfunct[200,:,0] == 0].max() + xl[self.sdfunct[200,:,0] == 0].min() )/2 - self.X0.min()) / self.delta)
-			center_p_y = int(200)
+		# true_mask = grid[0,:,:,3][grid[0,:,:,2] != 0]
+		# pred_mask = result_array[0,:,:,0][grid[0,:,:,2] != 0]
+		# norm = np.max(grid[0,:,:,3][grid[0,:,:,2] != 0]) - np.min(grid[0,:,:,3][grid[0,:,:,2] != 0])
 
-			result = np.empty(gradP[0,:,:,0].shape)
+		# mask_nan = ~np.isnan( pred_mask  - true_mask )
 
-			# block 1 - Upper right
-			block_1 = gradP[0,:center_p_y,center_p_x-1:,:].copy()
-			mask1 = self.sdfunct[:center_p_y,center_p_x-1,0] != 0 
-			pBlock1 = self.integrate_field(block_1, xl, yl, direction_x = -1)
-			result[:center_p_y,center_p_x-1:] = pBlock1#[:,::-1]
+		# BIAS_norm = np.mean( (pred_mask  - true_mask )[mask_nan] )/norm * 100
+		# RMSE_norm = np.sqrt(np.mean( ( pred_mask  - true_mask )[mask_nan]**2 ))/norm * 100
+		# STDE_norm = np.sqrt( (RMSE_norm**2 - BIAS_norm**2) )
+		
 
-			# block 2 - Upper left
-			block_2 = gradP[0,:center_p_y,:center_p_x,:].copy()
-			mask2 = self.sdfunct[:center_p_y,center_p_x,0] != 0 
-			pBlock2 = self.integrate_field(block_2, xl, yl)
-			pBlock2Corrected = pBlock2 - (pBlock2[:,-1][mask2] - pBlock1[:,0][mask1]).mean() 
-			result[:center_p_y,:center_p_x] = pBlock2Corrected
+		# # This prints the error metrics for each time frame
+		# print(f"""
+		# normVal  = {norm} Pa
+		# biasNorm = {BIAS_norm:.2f}%
+		# stdeNorm = {STDE_norm:.2f}%
+		# rmseNorm = {RMSE_norm:.2f}%
+		# """)
 
-			# block 3 - Lower right
-			block_3 = gradP[0,center_p_y:,center_p_x-1:,:].copy()
-			mask3 = self.sdfunct[center_p_y:,center_p_x-1,0] != 0 
-			pBlock3 = self.integrate_field(block_3, xl, yl, direction_x = -1, direction_y=-1)
-			result[center_p_y:,center_p_x-1:] = pBlock3
+		# self.pred_minus_true.append( np.mean( (pred_mask  - true_mask )[mask_nan] )/norm )
+		# self.pred_minus_true_squared.append( np.mean( (pred_mask  - true_mask )[mask_nan]**2 )/norm**2 )
 
-			# block 4 - Lower left
-			block_4 = gradP[0,center_p_y:,:center_p_x,:].copy()
-			mask4 = self.sdfunct[center_p_y:,center_p_x,0] != 0 
-			pBlock4 = self.integrate_field(block_4, xl, yl, direction_y=-1)
-			pBlock4Corrected = pBlock4 - (pBlock4[:,-1][mask4] - pBlock3[:,0][mask3]).mean() 
-			result[center_p_y:,:center_p_x] = pBlock4Corrected
-
-			#masked_arr = np.ma.array(result, mask=(grid[0,:,:,2] == 0))
-			#plt.imshow(masked_arr)
-			#plt.colorbar()
-			#plt.show()
-			
-			if save_plots:
-
-				field = result 
-
-				masked_arr = np.ma.array(field, mask=(grid[0,:,:,2] == 0))
-				fig, axs = plt.subplots(3,1, figsize=(65, 15))
-
-				vmax = np.max(grid[0,:,:,5])
-				vmin = np.min(grid[0,:,:,5])
-
-				axs[0].set_title('p predicted', fontsize = 15)
-				cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-				plt.colorbar(cf, ax=axs[0])
-
-				masked_arr = np.ma.array(grid[0,:,:,5], mask=(grid[0,:,:,2] == 0))
-
-				axs[1].set_title('CFD results', fontsize = 15)
-				cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin)
-				plt.colorbar(cf, ax=axs[1])
-
-				masked_arr = np.ma.array( np.abs(( grid[0,:,:,5] -field )/(np.max(grid[0,:,:,5]) -np.min(grid[0,:,:,5]))*100) , mask=(grid[0,:,:,2] == 0))
-
-				axs[2].set_title('error in %', fontsize = 15)
-				cf = axs[2].imshow(masked_arr, interpolation='nearest', cmap='jet', vmax = 10, vmin=0 )
-				plt.colorbar(cf, ax=axs[2])
-
-				if show_plots:
-					plt.show()
-
-				# Uncomment this part to test the integration method, this should give the correct pressure field since it is using test grad(P)
-
-				# ...
-
-				plt.savefig('plots/' + str(i) + '.png')
-				plt.close()
-
-			############## ------------------//------------------##############################
-
-
-			# true_mask = grid[0,:,:,3][grid[0,:,:,2] != 0]
-			# pred_mask = result_array[0,:,:,0][grid[0,:,:,2] != 0]
-			# norm = np.max(grid[0,:,:,3][grid[0,:,:,2] != 0]) - np.min(grid[0,:,:,3][grid[0,:,:,2] != 0])
-
-			# mask_nan = ~np.isnan( pred_mask  - true_mask )
-
-			# BIAS_norm = np.mean( (pred_mask  - true_mask )[mask_nan] )/norm * 100
-			# RMSE_norm = np.sqrt(np.mean( ( pred_mask  - true_mask )[mask_nan]**2 ))/norm * 100
-			# STDE_norm = np.sqrt( (RMSE_norm**2 - BIAS_norm**2) )
-			
-
-			# # This prints the error metrics for each time frame
-			# print(f"""
-			# normVal  = {norm} Pa
-			# biasNorm = {BIAS_norm:.2f}%
-			# stdeNorm = {STDE_norm:.2f}%
-			# rmseNorm = {RMSE_norm:.2f}%
-			# """)
-
-			# self.pred_minus_true.append( np.mean( (pred_mask  - true_mask )[mask_nan] )/norm )
-			# self.pred_minus_true_squared.append( np.mean( (pred_mask  - true_mask )[mask_nan]**2 )/norm**2 )
-
-			return 0
+		return 0
 
 	
 def main():
@@ -679,7 +691,7 @@ def main():
 	hdf5_path = '../training/dataset_gradP_cil.hdf5' #adjust dataset path
 
 	save_plots = True
-	show_plots = False
+	show_plots = True
 	apply_filter = False
 
 	Eval = Evaluation(delta, shape, avance, var_p, var_in, hdf5_path, model_directory)
