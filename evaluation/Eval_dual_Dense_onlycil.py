@@ -249,6 +249,9 @@ class Evaluation():
 
 		self.indices = indices.astype(int)
 
+		self.pred_minus_true = []
+		self.pred_minus_true_squared = []
+
 		return 0
 
 	def assemble_prediction(self, field, array, indices_list, n_x, n_y, apply_filter, shape_x, shape_y):
@@ -713,20 +716,18 @@ def main():
 
 	for sim in sims:
 		Eval.computeOnlyOnce(sim)
-		# Timesteps used for evalution
+		# Timesteps used for evaluation
 		for time in range(5):
 			Eval.timeStep(sim, time, plot_intermediate_fields, save_plots, show_plots, apply_filter)
 
-	#np.savetxt('errors', error)
+		BIAS_value = np.mean(Eval.pred_minus_true) * 100
+		RMSE_value = np.sqrt(np.mean(Eval.pred_minus_true_squared)) * 100
+		STDE_value = np.sqrt( RMSE_value**2 - BIAS_value**2 )
 
-	BIAS_value = np.mean(Eval.pred_minus_true) * 100
-	RMSE_value = np.sqrt(np.mean(Eval.pred_minus_true_squared)) * 100
-
-	STDE_value = np.sqrt( RMSE_value**2 - BIAS_value**2 )
-
-	print('BIAS for the sim: ' + str(BIAS_value))
-	print('RMSE for the sim: ' + str(RMSE_value))
-	print('STDE for the sim: ' + str(STDE_value))
+		print('Metrics for the whole simulation:')
+		print('BIAS for the sim: ' + str(BIAS_value))
+		print('RMSE for the sim: ' + str(RMSE_value))
+		print('STDE for the sim: ' + str(STDE_value))
 
 
 if __name__ == '__main__':
