@@ -155,9 +155,9 @@ class Evaluation():
 			time (int): Time frame.
 		"""
 		with h5py.File(path, "r") as f:
-			data = hdf5_file["sim_data"][sim:sim+1,time:time+1, ...]
-			top_boundary = hdf5_file["top_bound"][sim:sim+1, time:time+1 , ...]
-			obst_boundary = hdf5_file["obst_bound"][sim:sim+1, time:time+1 , ...]
+			data = f["sim_data"][sim:sim+1,time:time+1, ...]
+			top_boundary = f["top_bound"][sim:sim+1, time:time+1 , ...]
+			obst_boundary = f["obst_bound"][sim:sim+1, time:time+1 , ...]
 		return data, top_boundary, obst_boundary
 
 	def computeOnlyOnce(self, sim):
@@ -185,18 +185,18 @@ class Evaluation():
 		self.X0 = X0
 		self.Y0 = Y0
 		xy0 = np.concatenate((np.expand_dims(X0, axis=1),np.expand_dims(Y0, axis=1)), axis=-1)
-		points = data[i,0,:self.indice,3:5] #coordinates
+		points = data[0,0,:self.indice,3:5] #coordinates
 		self.vert, self.weights = self.interp_weights(points, xy0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
 
 		# boundaries indice
-		indice_top = self.index(top_boundary[i,0,:,0] , -100.0 )[0]
-		top = top_boundary[i,0,:indice_top,:]
+		indice_top = self.index(top_boundary[0,0,:,0] , -100.0 )[0]
+		top = top_boundary[0,0,:indice_top,:]
 		self.max_x, self.max_y, self.min_x, self.min_y = np.max(top[:,0]), np.max(top[:,1]) , np.min(top[:,0]) , np.min(top[:,1])
 
 		is_inside_domain = ( xy0[:,0] <= self.max_x)  * ( xy0[:,0] >= self.min_x ) * ( xy0[:,1] <= self.max_y ) * ( xy0[:,1] >= self.min_y ) #rhis is just for simplification
 
-		indice_obst = self.index(obst_boundary[i,0,:,0] , -100.0 )[0]
-		obst = obst_boundary[i,0,:indice_obst,:]
+		indice_obst = self.index(obst_boundary[0,0,:,0] , -100.0 )[0]
+		obst = obst_boundary[0,0,:indice_obst,:]
 
 		obst_points = MultiPoint(obst)
 
@@ -404,7 +404,7 @@ class Evaluation():
 
 		return Phat
 
-	def timeStep(self, sim, time, save_plots, show_plots, apply_filter):
+	def timeStep(self, sim, time, plot_intermediate_fields, save_plots, show_plots, apply_filter):
 		"""
 
 		Args:
@@ -536,34 +536,46 @@ class Evaluation():
 		
 		################## ----------------//---------------####################################
 
-		# Plotting intermediate fields: dP/dx and dP/dy
+		# Plotting intermediate fields: gradP = {dP/dx, dP/dy}
 
-		fig, axs = plt.subplots(2,1, figsize=(65, 15))
+		if plot_intermediate_fields:
 
-		masked_arr = np.ma.array(res_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-		axs[0].set_title('dp/dx predicted', fontsize = 15)
-		cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-		plt.colorbar(cf, ax=axs[0])
+			fig, axs = plt.subplots(2,1, figsize=(65, 15))
 
-		masked_arr = np.ma.array(test_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-		axs[1].set_title('Ground truth', fontsize = 15)
-		cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-		plt.colorbar(cf, ax=axs[1])
+			masked_arr = np.ma.array(res_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+			axs[0].set_title('dp/dx predicted', fontsize = 15)
+			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[0])
 
-		fig, axs = plt.subplots(2,1, figsize=(65, 15))
-		
-		masked_arr = np.ma.array(res_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-		axs[0].set_title('dp/dy predicted', fontsize = 15)
-		cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-		plt.colorbar(cf, ax=axs[0])
+			masked_arr = np.ma.array(test_dPdx[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+			axs[1].set_title('Ground truth', fontsize = 15)
+			cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[1])
 
-		masked_arr = np.ma.array(test_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
-		axs[1].set_title('Ground truth', fontsize = 15)
-		cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-		plt.colorbar(cf, ax=axs[1])
+			if save_plots:
+				fig.savefig('plots/' + 'dp_dx' + str(time) + '.png')
 
-		if show_plots:
-			plt.show()
+			plt.close()
+
+			fig, axs = plt.subplots(2,1, figsize=(65, 15))
+			
+			masked_arr = np.ma.array(res_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+			axs[0].set_title('dp/dy predicted', fontsize = 15)
+			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[0])
+
+			masked_arr = np.ma.array(test_dPdy[0,:,:,0], mask=(grid[0,:,:,2] == 0))
+			axs[1].set_title('Ground truth', fontsize = 15)
+			cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+			plt.colorbar(cf, ax=axs[1])
+
+			if show_plots:
+				plt.show()
+
+			if save_plots:
+				fig.savefig('plots/' + 'dp_dy' + str(time) + '.png')
+
+			plt.close()
 
 		gradP = np.concatenate([res_dPdx, res_dPdy], axis = -1)
 		
@@ -602,69 +614,65 @@ class Evaluation():
 		pBlock4 = self.integrate_field(block_4, xl, yl, direction_y=-1)
 		pBlock4Corrected = pBlock4 - (pBlock4[:,-1][mask4] - pBlock3[:,0][mask3]).mean() 
 		result[center_p_y:,:center_p_x] = pBlock4Corrected
+	
+		field = result 
 
-		#masked_arr = np.ma.array(result, mask=(grid[0,:,:,2] == 0))
-		#plt.imshow(masked_arr)
-		#plt.colorbar()
-		#plt.show()
-		
+		# Plotting the integrated pressure field
+		masked_arr = np.ma.array(field, mask=(grid[0,:,:,2] == 0))
+		fig, axs = plt.subplots(3,1, figsize=(65, 15))
+
+		vmax = np.max(grid[0,:,:,5])
+		vmin = np.min(grid[0,:,:,5])
+
+		axs[0].set_title('p predicted', fontsize = 15)
+		cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
+		plt.colorbar(cf, ax=axs[0])
+
+		masked_arr = np.ma.array(grid[0,:,:,5], mask=(grid[0,:,:,2] == 0))
+
+		axs[1].set_title('CFD results', fontsize = 15)
+		cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin)
+		plt.colorbar(cf, ax=axs[1])
+
+		masked_arr = np.ma.array( np.abs(( grid[0,:,:,5] - field )/(np.max(grid[0,:,:,5]) -np.min(grid[0,:,:,5]))*100) , mask=(grid[0,:,:,2] == 0))
+
+		axs[2].set_title('error in %', fontsize = 15)
+		cf = axs[2].imshow(masked_arr, interpolation='nearest', cmap='jet', vmax = 10, vmin=0 )
+		plt.colorbar(cf, ax=axs[2])
+
+		if show_plots:
+			plt.show()
+
 		if save_plots:
+			fig.savefig('plots/' + 'p_pred' + str(time) + '.png')
 
-			field = result 
-
-			masked_arr = np.ma.array(field, mask=(grid[0,:,:,2] == 0))
-			fig, axs = plt.subplots(3,1, figsize=(65, 15))
-
-			vmax = np.max(grid[0,:,:,5])
-			vmin = np.min(grid[0,:,:,5])
-
-			axs[0].set_title('p predicted', fontsize = 15)
-			cf = axs[0].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin )
-			plt.colorbar(cf, ax=axs[0])
-
-			masked_arr = np.ma.array(grid[0,:,:,5], mask=(grid[0,:,:,2] == 0))
-
-			axs[1].set_title('CFD results', fontsize = 15)
-			cf = axs[1].imshow(masked_arr, interpolation='nearest', cmap='jet')#, vmax = vmax, vmin = vmin)
-			plt.colorbar(cf, ax=axs[1])
-
-			masked_arr = np.ma.array( np.abs(( grid[0,:,:,5] -field )/(np.max(grid[0,:,:,5]) -np.min(grid[0,:,:,5]))*100) , mask=(grid[0,:,:,2] == 0))
-
-			axs[2].set_title('error in %', fontsize = 15)
-			cf = axs[2].imshow(masked_arr, interpolation='nearest', cmap='jet', vmax = 10, vmin=0 )
-			plt.colorbar(cf, ax=axs[2])
-
-			if show_plots:
-				plt.show()
-
-			plt.savefig('plots/' + str(i) + '.png')
-			plt.close()
+		plt.close()
 
 		############## ------------------//------------------##############################
 		
-		# This part is to output the error metric
+		# This part is to output the error metrics
 
-		# true_mask = grid[0,:,:,3][grid[0,:,:,2] != 0]
-		# pred_mask = result_array[0,:,:,0][grid[0,:,:,2] != 0]
-		# norm = np.max(grid[0,:,:,3][grid[0,:,:,2] != 0]) - np.min(grid[0,:,:,3][grid[0,:,:,2] != 0])
+		true_mask = grid[0,:,:,3][grid[0,:,:,2] != 0]
+		pred_mask = field[grid[0,:,:,2] != 0]
+		norm = np.max(grid[0,:,:,3][grid[0,:,:,2] != 0]) - np.min(grid[0,:,:,3][grid[0,:,:,2] != 0])
 
-		# mask_nan = ~np.isnan( pred_mask  - true_mask )
+		mask_nan = ~np.isnan( pred_mask  - true_mask )
 
-		# BIAS_norm = np.mean( (pred_mask  - true_mask )[mask_nan] )/norm * 100
-		# RMSE_norm = np.sqrt(np.mean( ( pred_mask  - true_mask )[mask_nan]**2 ))/norm * 100
-		# STDE_norm = np.sqrt( (RMSE_norm**2 - BIAS_norm**2) )
+		BIAS_norm = np.mean( (pred_mask  - true_mask )[mask_nan] )/norm * 100
+		RMSE_norm = np.sqrt(np.mean( ( pred_mask  - true_mask )[mask_nan]**2 ))/norm * 100
+		STDE_norm = np.sqrt( (RMSE_norm**2 - BIAS_norm**2) )
 		
 
-		# # This prints the error metrics for each time frame
-		# print(f"""
-		# normVal  = {norm} Pa
-		# biasNorm = {BIAS_norm:.2f}%
-		# stdeNorm = {STDE_norm:.2f}%
-		# rmseNorm = {RMSE_norm:.2f}%
-		# """)
+		# This prints the error metrics for each time frame
+		print(f"""
+		normVal  = {norm} Pa
+		biasNorm = {BIAS_norm:.2f}%
+		stdeNorm = {STDE_norm:.2f}%
+		rmseNorm = {RMSE_norm:.2f}%
+		""")
 
-		# self.pred_minus_true.append( np.mean( (pred_mask  - true_mask )[mask_nan] )/norm )
-		# self.pred_minus_true_squared.append( np.mean( (pred_mask  - true_mask )[mask_nan]**2 )/norm**2 )
+		self.pred_minus_true.append( np.mean( (pred_mask  - true_mask )[mask_nan] )/norm )
+		self.pred_minus_true_squared.append( np.mean( (pred_mask  - true_mask )[mask_nan]**2 )/norm**2 )
 
 		return 0
 
@@ -690,20 +698,24 @@ def main():
 	var_in = 0.95
 	hdf5_path = '../training/dataset_gradP_cil.hdf5' #adjust dataset path
 
+	plot_intermediate_fields = True
 	save_plots = True
-	show_plots = True
+	show_plots = False
 	apply_filter = False
 
 	Eval = Evaluation(delta, shape, avance, var_p, var_in, hdf5_path, model_directory)
 	Eval.pred_minus_true = []
 	Eval.pred_minus_true_squared = []
 
-	sims = [ 0, 3, 6, 8 ] #phi 0.5, 0.8, 1.1, 1.4
+	# Simulations to use for evaluation
+	# This point to the number of the simulation data in the dataset
+	sims = [0]
 
 	for sim in sims:
 		Eval.computeOnlyOnce(sim)
-		for time in range(10):
-			Eval.timeStep(sim*10, time, save_plots, show_plots, apply_filter)
+		# Timesteps used for evalution
+		for time in range(5):
+			Eval.timeStep(sim, time, plot_intermediate_fields, save_plots, show_plots, apply_filter)
 
 	#np.savetxt('errors', error)
 
