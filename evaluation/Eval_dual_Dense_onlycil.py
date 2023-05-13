@@ -14,13 +14,10 @@ import shutil
 import time
 import h5py
 import numpy as np
-import math
 import scipy.spatial.qhull as qhull
 
 import pickle as pk
 import itertools
-from scipy.spatial import cKDTree as KDTree
-from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import matplotlib.path as mpltPath
 
@@ -173,6 +170,7 @@ class Evaluation():
 
 		self.indice = self.index(data[0,0,:,0] , -100.0 )[0]
 
+
 		x_min = round(np.min(data[0,0,...,:self.indice,3]),2) 
 		x_max = round(np.max(data[0,0,...,:self.indice,3]),2) 
 
@@ -272,13 +270,12 @@ class Evaluation():
 		shape = self.shape
 		Ref_BC = self.Ref_BC
 
-
-		result_array = np.empty(shape=(1,shape_y, shape_x, 1))
+		result_array = np.empty(shape=(1, shape_y, shape_x, 1))
 
 		BC_ups = np.zeros(n_x+1)
 
-		p_i = shape_y - (shape*(n_y+1) - n_y*avance)
-		p_j = (shape_x-shape) - n_x*(shape-avance)
+		p_i = shape_y - (shape * (n_y+1) - n_y*avance)
+		p_j = (shape_x-shape) - n_x * (shape-avance)
 
 		result = result_array
 
@@ -291,7 +288,17 @@ class Evaluation():
 			if idx_i == 0: # first row
 				if i == 0:
 					if field == 'dp_dx': # using inlet boundary condition
-						BC_coor = np.mean(pred_field[:,0][flow_bool[:,0]!=0]) - Ref_BC # setting here the reference BC 
+						
+						# The column of cells where this reference BC is applied must 
+						# be part of the flow domain
+						col = 0
+						while (flow_bool[:,col]!=0).sum() == 0:
+							col += 1
+							assert col < shape, f"At least the right-most column of the {shape}x{shape} block must belong \
+								to the flow domain, or this won't work. Please change the way you construct the dataset, or preprocess it."
+
+						BC_coor = np.mean(pred_field[:,col][flow_bool[:,col]!=0]) - Ref_BC # setting here the reference BC 
+
 					elif field == 'dp_dy': # using top wall boundary condition
 						BC_coor = np.mean(pred_field[1,:][flow_bool[1,:]!=0]) - Ref_BC  # i = 0 sits outside the inclusion zone
 				else:
@@ -355,6 +362,7 @@ class Evaluation():
 
 
 		################### this applies a gaussian filter to remove boundary artifacts #################
+
 		if apply_filter:
 			result = ndimage.gaussian_filter(result[0,:,:,0], sigma=(10, 10), order=0)
 
@@ -451,7 +459,6 @@ class Evaluation():
 		grid[0,:,:,4:5][tuple(self.indices.T)] = dPdy_interp.reshape(dPdy_interp.shape[0],1)
 		grid[0,:,:,5:6][tuple(self.indices.T)] = p_interp.reshape(p_interp.shape[0],1)
 
-
 		grid[np.isnan(grid)] = 0 #set any nan value to 0
 
 		grid[0,:,:,0:1] = grid[0,:,:,0:1]/self.max_abs_Ux
@@ -472,7 +479,9 @@ class Evaluation():
 		n_x = int(np.ceil((grid.shape[2]-shape)/(shape - avance )) )
 		n_y = int((grid.shape[1]-shape)/(shape - avance ))
 
-		# To work with dPdx should start from the left 
+		# To work with dPdx should start sampling from the left 
+		# Because the boundary condition is imposed at the inlet boundary (dp/dx = 0)
+		# And afterwards reconstruction must start from the boundary where we know the BC
 
 		for i in range ( n_y + 2 ): #+1 b
 			for j in range ( n_x +1 ):
@@ -530,11 +539,11 @@ class Evaluation():
 
 		# the boundary condition is 0 for both dP/dx and dP/dy but at different boundaries
 		self.Ref_BC = 0 
-		
+
 		# performing the assembly process
 		res_dPdx = self.assemble_prediction('dp_dx', res_concat[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
 		res_dPdy = self.assemble_prediction('dp_dy', res_concat[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
-		test_dPdx = self.assemble_prediction('dp_dy', y_array[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
+		test_dPdx = self.assemble_prediction('dp_dx', y_array[...,0], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
 		test_dPdy = self.assemble_prediction('dp_dy', y_array[...,1], indices_list, n_x, n_y, apply_filter, grid.shape[2], grid.shape[1])
 		
 		################## ----------------//---------------####################################
@@ -699,7 +708,7 @@ def main():
 	avance = int(0.75*shape)
 	var_p = 0.95
 	var_in = 0.95
-	hdf5_path = '../training/dataset_gradP_cil.hdf5' #adjust dataset path
+	hdf5_path = 'dataset_gradP_cil.hdf5' #adjust dataset path
 
 	plot_intermediate_fields = True
 	save_plots = True
