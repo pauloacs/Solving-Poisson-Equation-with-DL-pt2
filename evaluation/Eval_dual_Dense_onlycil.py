@@ -28,7 +28,7 @@ import scipy.ndimage as ndimage
 from scipy import interpolate
 
 class Evaluation():
-	def __init__(self, delta, shape, avance, var_p, var_in, hdf5_path, model_path):
+	def __init__(self, delta, shape, avance, var_p, var_in, hdf5_path, model_path, max_number_PC):
 		"""
 		Initialize Evaluation class. 
 
@@ -62,8 +62,8 @@ class Evaluation():
 		self.pcainput = pk.load(open("ipca_input.pkl",'rb'))
 		self.pcap = pk.load(open("ipca_p.pkl",'rb'))
 
-		self.pc_p = np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) if np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) > 1 and np.argmax(self.pcap.explained_variance_ratio_.cumsum() > 0.95) <= 128 else 128  #max defined to be 32 here
-		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > 0.995) <= 128 else 128
+		self.pc_p = np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) if np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) > 1 and np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) <= max_number_PC else max_number_PC
+		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > 0.self.var_in) <= max_number_PC else max_number_PC
 
 
 	def interp_weights(self, xyz, uvw):
@@ -708,6 +708,7 @@ def main():
 	avance = int(0.75*shape)
 	var_p = 0.95
 	var_in = 0.95
+	max_number_PC = 512
 	hdf5_path = 'dataset_gradP_cil.hdf5' #adjust dataset path
 
 	plot_intermediate_fields = True
@@ -715,7 +716,7 @@ def main():
 	show_plots = False
 	apply_filter = False
 
-	Eval = Evaluation(delta, shape, avance, var_p, var_in, hdf5_path, model_directory)
+	Eval = Evaluation(delta, shape, avance, var_p, var_in, hdf5_path, model_directory, max_number_PC)
 	Eval.pred_minus_true = []
 	Eval.pred_minus_true_squared = []
 
