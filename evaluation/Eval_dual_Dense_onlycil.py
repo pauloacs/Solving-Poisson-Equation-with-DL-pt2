@@ -63,7 +63,7 @@ class Evaluation():
 		self.pcap = pk.load(open("ipca_p.pkl",'rb'))
 
 		self.pc_p = np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) if np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) > 1 and np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) <= max_number_PC else max_number_PC
-		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > 0.self.var_in) <= max_number_PC else max_number_PC
+		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) <= max_number_PC else max_number_PC
 
 
 	def interp_weights(self, xyz, uvw):
