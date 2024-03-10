@@ -4,14 +4,7 @@ This repository is a continuation of the work in [Solving-Poisson-s-Equation-thr
 
 This repository contains two new variants of the Surrogate Models developed in the above project.
 
-## U_to_gradP
-
-- **Inputs:** $U$ & $SDF$
-- **Output:** $\nabla p$
-
-Here a different method is being developed to improve the generalization capacity for different Re numbers.
-
-## deltaU_to_deltaP
+## deltaU_to_deltaP Surrogate Model
 
 - **Inputs:** $[U(t) - U(t-1)]$ & $SDF$
 - **Output:** $[p(t) - p(t-1)]$
@@ -52,3 +45,11 @@ evaluation_script --model_name model.h5 --var_p 0.95 --var_in 0.95 --dataset_pat
 
 **Enter folder deltaU_to_deltaP for more details**
 
+## U_to_gradP Surrogate Model
+
+- **Inputs:** $U$ & $SDF$
+- **Output:** $\nabla p$
+
+Here a different method is being developed to improve the generalization capacity for different Re numbers.
+
+(This SM still needs to be turned into a python package, for now only scripts are available)
