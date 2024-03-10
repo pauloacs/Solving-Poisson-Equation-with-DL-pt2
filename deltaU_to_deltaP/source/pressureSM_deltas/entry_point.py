@@ -8,15 +8,17 @@ def train_entry_point():
     # Required arguments
     parser.add_argument('--dataset_path', type=str, required=True,
                         help='Path to dataset')
-    parser.add_argument('--outarray_fn', type=str, default='outarray.h5',
+    parser.add_argument('--outarray_fn', type=str, required=True,
                         help='Path to dataset')
     parser.add_argument('--num_sims', type=int, required=True,
                         help='Number of simulations')
+    parser.add_argument('--num_ts', type=int, required=True,
+                        help='Number of temporal frames of each simulation')
     parser.add_argument('--num_epoch', type=int, required=True,
                         help='Number of epochs')
     parser.add_argument('--lr', type=float, required=True,
                         help='Learning rate')
-    parser.add_argument('--n_samples', type=int, required=True,
+    parser.add_argument('--n_samples', type=float, required=True,
                         help='Number of samples per simulation')
     parser.add_argument('--var_p', type=float, required=True,
                         help='Var p value')
@@ -24,12 +26,10 @@ def train_entry_point():
                         help='Var in value')
     parser.add_argument('--model_size', type=str, required=True,
                         help='Model size')
-    parser.add_argument('--use_dropout', action='store_true', required=True,
-                        help='Use dropout')
 
     # Optional arguments
-    parser.add_argument('--path_placa', type=str, default='dataset_plate_deltas_5sim20t.hdf5',
-                        help='Path to dataset')
+    parser.add_argument('--dropout_rate', type=float, default=None,
+                        help="Dropout rate. If None the model won't have dropout layers")
     parser.add_argument('--beta', type=float, default=0.99,
                         help='Beta value')
     parser.add_argument('--batch_size', type=int, default=1024,
@@ -76,7 +76,7 @@ def eval_entry_point():
                         help='Shape value')
     parser.add_argument('--overlap_ratio', type=float, default=0.25,
                         help='Overlap ratio')
-    parser.add_argument('--max_number_PC', type=int, default=128,
+    parser.add_argument('--max_num_PC', type=int, default=128,
                         help='Max number of PCs')
     parser.add_argument('--standardization_method', type=str, default='std',
                         help='Standardization method')

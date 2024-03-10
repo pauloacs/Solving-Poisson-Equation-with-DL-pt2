@@ -27,7 +27,7 @@ import scipy.ndimage as ndimage
 from scipy import interpolate
 
 class Evaluation():
-	def __init__(self, delta, shape, overlap, var_p, var_in, hdf5_path, model_path, max_number_PC, standardization_method):
+	def __init__(self, delta, shape, overlap, var_p, var_in, dataset_path, model_path, max_num_PC, standardization_method):
 		"""
 		Initialize Evaluation class. 
 
@@ -37,7 +37,7 @@ class Evaluation():
             overlap (float): 
 			var_p (float): 
 			var_in (float): 
-			hdf5_path (str):
+			dataset_path (str):
 			model_path (str):
         """
 		self.delta = delta
@@ -45,7 +45,7 @@ class Evaluation():
 		self.overlap = overlap
 		self.var_in = var_in
 		self.var_p = var_p
-		self.hdf5_path = hdf5_path
+		self.dataset_path = dataset_path
 		self.standardization_method = standardization_method
 
 		maxs = np.loadtxt('maxs')
@@ -62,8 +62,8 @@ class Evaluation():
 		self.pcainput = pk.load(open("ipca_input.pkl",'rb'))
 		self.pcap = pk.load(open("ipca_p.pkl",'rb'))
 
-		self.pc_p = np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) if np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) > 1 and np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) <= max_number_PC else max_number_PC
-		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) <= max_number_PC else max_number_PC
+		self.pc_p = np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) if np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) > 1 and np.argmax(self.pcap.explained_variance_ratio_.cumsum() > self.var_p) <= max_num_PC else max_num_PC
+		self.pc_in = np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) if np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) > 1 and np.argmax(self.pcainput.explained_variance_ratio_.cumsum() > self.var_in) <= max_num_PC else max_num_PC
 
 
 	def interp_weights(self, xyz, uvw):
@@ -166,7 +166,7 @@ class Evaluation():
 			sim (int): Simulation number.
 		"""
 		time = 0
-		data, top_boundary, obst_boundary = self.read_dataset(self.hdf5_path, sim , time)
+		data, top_boundary, obst_boundary = self.read_dataset(self.dataset_path, sim , time)
 
 		self.indice = self.index(data[0,0,:,0] , -100.0 )[0]
 
@@ -420,7 +420,7 @@ class Evaluation():
 			apply_filter
 		"""
 	
-		data, top_boundary, obst_boundary = self.read_dataset(self.hdf5_path, sim , time)
+		data, top_boundary, obst_boundary = self.read_dataset(self.dataset_path, sim , time)
 		i = 0
 		j = 0
 		
@@ -691,7 +691,7 @@ class Evaluation():
 
 
 
-def call_SM_main(delta, model_directory, shape, overlap_ratio, var_p, var_in, max_num_PC, dataset_path,	\
+def call_SM_main(delta, model_name, shape, overlap_ratio, var_p, var_in, max_num_PC, dataset_path,	\
 					plot_intermediate_fields, standardization_method, save_plots, show_plots, apply_filter, create_GIF, \
 					n_sims, n_ts):
 
@@ -707,14 +707,13 @@ def call_SM_main(delta, model_directory, shape, overlap_ratio, var_p, var_in, ma
 
 	overlap = int(overlap_ratio*shape)
 	
-	Eval = Evaluation(delta, shape, overlap, var_p, var_in, hdf5_path, model_directory, max_number_PC, standardization_method)
+	Eval = Evaluation(delta, shape, overlap, var_p, var_in, dataset_path, model_name, max_num_PC, standardization_method)
 	Eval.pred_minus_true = []
 	Eval.pred_minus_true_squared = []
 
 	# Simulations to use for evaluation
 	# This points to the number of the simulation data in the dataset
 	sims = list(range(n_sims))
-
 
 	for sim in sims:
 		Eval.computeOnlyOnce(sim)
@@ -757,7 +756,7 @@ if __name__ == '__main__':
 	overlap_ratio = 0.25
 	var_p = 0.95
 	var_in = 0.95
-	max_number_PC = 128
+	max_num_PC = 128
 	dataset_path = '../dataset_plate_deltas_5sim20t.hdf5' #adjust dataset path
 	standardization_method = 'std'
 
@@ -770,7 +769,7 @@ if __name__ == '__main__':
 	n_sims = 5
 	n_ts = 5
 
-	call_SM_main(delta, model_directory, shape, overlap_ratio, var_p, var_in, max_num_PC, dataset_path,	\
+	call_SM_main(delta, model_name, shape, overlap_ratio, var_p, var_in, max_num_PC, dataset_path,	\
 				plot_intermediate_fields, standardization_method, save_plots, show_plots, apply_filter, create_GIF, \
 				n_sims, n_ts)
 

@@ -96,7 +96,7 @@ class Training:
     return XX0.flatten(), YY0.flatten()
 
 
-  def densePCA(self, n_layers, depth=512, use_dropout=False):
+  def densePCA(self, n_layers, depth=512, dropout_rate=False):
     """
     Creates the MLP NN.
     """
@@ -105,11 +105,11 @@ class Training:
     if len(depth) == 1:
       depth = [depth]*n_layers
     x = tf.keras.layers.Dense(depth[0], activation='relu')(inputs)
-    if use_dropout: x = tf.keras.layers.Dropout(0.2)(x)
+    if dropout_rate: x = tf.keras.layers.Dropout(0.2)(x)
     for i in range(n_layers - 1):
       x = tf.keras.layers.Dense(depth[i+1], activation='relu')(x)
-      if use_dropout: x = tf.keras.layers.Dropout(0.2)(x)
-    outputs = tf.keras.layers.Dense(self.PC_p)(x) #shape(16,16,1)
+      if dropout_rate: x = tf.keras.layers.Dropout(0.2)(x)
+    outputs = tf.keras.layers.Dense(self.PC_p)(x)
 
     model = Model(inputs, outputs, name="MLP")
     print(model.summary())
@@ -645,9 +645,11 @@ class Training:
     # Convert values to compatible tf.Example types.
 
     split = 0.9
-    count = self.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data")
-    count = self.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
-
+    if not (os.path.isfile('train_data.tfrecords') and os.path.isfile('test_data.tfrecords')):
+      count = self.write_images_to_tfr_short(x[:int(split*x.shape[0]),...], y[:int(split*y.shape[0]),...], filename="train_data")
+      count = self.write_images_to_tfr_short(x[int(split*x.shape[0]):,...], y[int(split*y.shape[0]):,...], filename="test_data")
+    else:
+      print("TFRecords train and test data already available, using it... If you want to write new data, delete 'train_data.tfrecords' and 'test_data.tfrecords'!")
     self.len_train = int(split*x.shape[0])
 
     return 0 
@@ -711,7 +713,7 @@ class Training:
           return False
 
 
-  def load_data_And_train(self, lr, batch_size, max_num_PC, model_name, beta_1, num_epoch, n_layers, width, use_dropout):
+  def load_data_And_train(self, lr, batch_size, max_num_PC, model_name, beta_1, num_epoch, n_layers, width, dropout_rate):
 
     train_path = 'train_data.tfrecords'
     test_path = 'test_data.tfrecords'
@@ -725,7 +727,7 @@ class Training:
     self.loss_object = self.my_mse_loss()
 
     #model = tf.keras.models.load_model('model_first_.h5') # to load model
-    self.model = self.densePCA(n_layers, width, use_dropout)
+    self.model = self.densePCA(n_layers, width, dropout_rate)
 
     epochs_val_losses, epochs_train_losses = [], []
 
@@ -781,14 +783,35 @@ class Training:
         
     return 0
   
-def main_train(path_dataset, num_sims, num_ts, num_epoch, lr, beta, batch_size, standardization_method, \
-              n_samples, block_size, delta, max_num_PC, var_p, var_in, model_size, use_dropout, outarray_fn):
-      
-  Train = Training(delta, block_size,var_p, var_in, paths, Nsamples, numSims, numTimeFrames, standardization_method)
+def main_train(dataset_path, num_sims, num_ts, num_epoch, lr, beta, batch_size, standardization_method, \
+              n_samples, block_size, delta, max_num_PC, var_p, var_in, model_size, dropout_rate, outarray_fn):
+
+  if model_size == 'small':
+    n_layers = 3
+    width = [512]*3
+  elif model_size == 'medium':
+    n_layers = 5
+    width = [256] + [512]*3 + [256]
+  elif model_size == 'big':
+    n_layers = 8
+    width = [256] + [512]*6 + [256]
+  elif model_size == 'huge':
+    n_layers = 12
+    width = [256] + [512]*10 + [256]
+  else:
+    raise ValueError('Invalid NN model type')
+
+  paths = [dataset_path]
+  num_ts = [num_ts]
+  num_sims = [num_sims]
+
+  model_name = f'{model_size}-{model_size}-{standardization_method}-{var_p}-drop{dropout_rate}'
+
+  Train = Training(delta, block_size,var_p, var_in, paths, n_samples, num_sims, num_ts, standardization_method)
 
   # If you want to read the crude dataset (hdf5) again, delete the 'outarray.h5' file
   Train.prepare_data (paths, max_num_PC, outarray_fn) #prepare and save data to tf records
-  Train.load_data_And_train(lr, batch_size, max_num_PC, model_name, beta, num_epoch, n_layers, width, use_dropout)
+  Train.load_data_And_train(lr, batch_size, max_num_PC, model_name, beta, num_epoch, n_layers, width, dropout_rate)
 
 if __name__ == '__main__':
 
@@ -817,26 +840,9 @@ if __name__ == '__main__':
   var_in = 0.95
 
   model_size = 'small'
-  use_dropout = True
+  dropout_rate = 0.2
 
   outarray_fn = '../blocks_dataset/outarray.h5'
 
-  if model_size == 'small':
-    n_layers = 3
-    width = [512]*3
-  elif model_size == 'medium':
-    n_layers = 5
-    width = [256] + [512]*3 + [256]
-  elif model_size == 'big':
-    n_layers = 8
-    width = [256] + [512]*6 + [256]
-  elif model_size == 'huge':
-    n_layers = 12
-    width = [256] + [512]*10 + [256]
-  else:
-    raise ValueError('Invalid NN model type')
-
-  model_name = f'{model_size}-{standardization_method}-{var_p}'
-
   main_train(dataset_path, num_sims, num_ts, num_epoch, lr, beta, batch_size, standardization_method, \
-    n_samples, block_size, delta, max_num_PC, var_p, var_in, model_size, use_dropout, outarray_fn)
+    n_samples, block_size, delta, max_num_PC, var_p, var_in, model_size, dropout_rate, outarray_fn)
