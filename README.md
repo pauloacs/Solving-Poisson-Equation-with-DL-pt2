@@ -6,15 +6,15 @@ This repository contains two new variants of the Surrogate Models developed in t
 
 ## U_to_gradP
 
-- **Inputs:** U & sdf
-- **Output:** grad(p)
+- **Inputs:** $U$ & $SDF$
+- **Output:** $\nabla p$
 
 Here a different method is being developed to improve the generalization capacity for different Re numbers.
 
 ## deltaU_to_deltaP
 
-- **Inputs:** [U(t) - U(t-1)] & sdf
-- **Output:** [p(t) - p(t-1)]
+- **Inputs:** $[U(t) - U(t-1)]$ & $SDF$
+- **Output:** $[p(t) - p(t-1)]$
 
 Here a new SM is being developed to drastically improve the accuracy of the Surrogate model for a given Reynolds number.
 
