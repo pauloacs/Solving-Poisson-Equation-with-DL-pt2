@@ -32,12 +32,12 @@ To use it:
     train_script -h
     evaluate_script -h
 
-## Create your own Surrogate Model
+### Create your own Surrogate Model
 
 To actually create you own surrogate model follow the description of each entry point and:
 
-### 1st - **Train your SM** with the train_script entry point
-### 2nd - **Evaluate your SM** with the evaluate_script entry point
+#### 1st - **Train your SM** with the train_script entry point
+#### 2nd - **Evaluate your SM** with the evaluate_script entry point
 
 **Enter folder deltaU_to_deltaP for more details**
 
