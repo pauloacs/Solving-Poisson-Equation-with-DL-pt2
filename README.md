@@ -22,9 +22,10 @@ Here a new SM is being developed to drastically improve the accuracy of the Surr
 
 To use it:
 
-1. Enter the directory:
+1. Enter the directory and install the package
    ```bash
    cd deltaU_to_deltaP/
+   pip install .
 
 2. To use it check:
     ```bash
