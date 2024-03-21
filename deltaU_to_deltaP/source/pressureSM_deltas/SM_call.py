@@ -359,7 +359,7 @@ class Evaluation():
 				else:
 									
 					#up
-					y_0 = -p_i-overlap
+					y_0 = -p_i - overlap
 					y_f = -p_i
 					n_up_non_nans = (flow_bool[y_0:y_f,:]!=0).sum()
 					# right side

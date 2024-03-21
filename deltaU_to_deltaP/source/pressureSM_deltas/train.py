@@ -25,6 +25,7 @@ import time
 import h5py
 import numpy as np
 import tensorflow as tf
+#tf.random.set_seed(0)
 tf.keras.utils.set_random_seed(0)
 
 from tensorflow.keras import Model
@@ -49,16 +50,17 @@ import pickle as pk
 
 class Training:
 
-  def __init__(self, delta, block_size, var_p, var_in, hdf5_paths, Nsamples, numSims, numTimeFrames, standardization_method):
+  def __init__(self, delta, block_size, var_p, var_in, hdf5_paths, n_samples, num_sims, num_ts, standardization_method):
     self.delta = delta
     self.block_size = block_size
     self.var_in = var_in
     self.var_p = var_p
     self.paths = hdf5_paths
-    self.Nsamples = Nsamples
-    self.numSims = numSims
-    self.numTimeFrames = numTimeFrames
+    self.n_samples = n_samples
+    self.num_sims = num_sims[0]
+    self.num_ts = num_ts
     self.standardization_method = standardization_method
+
   #@njit     ### with numba.njit is much faster but is returning an error when using it within the class ###
   def index(self, array, item):
     for idx, val in np.ndenumerate(array):
@@ -124,11 +126,7 @@ class Training:
     top = top_boundary[i,0,:indice_top,:]
     max_x, max_y, min_x, min_y = np.max(top[:,0]), np.max(top[:,1]) , np.min(top[:,0]) , np.min(top[:,1])
 
-
-    #extra_points = np.array( [ ( np.min(top[:,0]) , 0 ), ( np.max(top[:,0]), 0 ) ] )  #to generalize just use top+inlet+ outlet and works for any domain and just remove this
-    #top = np.concatenate((top,extra_points), axis=0)  #np.c_[ np.append(top[:,0], extra_points) , np.append(top[:,1], extra_points) ]   
-
-    is_inside_domain = ( xy0[:,0] <= max_x)  * ( xy0[:,0] >= min_x ) * ( xy0[:,1] <= max_y ) * ( xy0[:,1] >= min_y ) #this is just for simplification
+     is_inside_domain = ( xy0[:,0] <= max_x)  * ( xy0[:,0] >= min_x ) * ( xy0[:,1] <= max_y ) * ( xy0[:,1] >= min_y )
 
     # regular polygon for testing
 
@@ -154,18 +152,176 @@ class Training:
     top = top[0:top.shape[0]:5,:]   #if this has too many values, using cdist can crash the memmory since it needs to evaluate the distance between ~1M points with thousands of points of top
     obst = obst[0:obst.shape[0]:5,:]
 
-    print(top.shape)
+    #print(top.shape)
 
     sdf = np.minimum( distance.cdist(xy0,obst).min(axis=1) , distance.cdist(xy0,top).min(axis=1) ) * domain_bool
-    print(np.max(distance.cdist(xy0,top).min(axis=1)))
-    print(np.max(sdf))
+    #print(np.max(distance.cdist(xy0,top).min(axis=1)))
+    #print(np.max(sdf))
 
     return domain_bool, sdf
 
-  def read_dataset(self):
+  def process_time_step(self, j, data_limited, vert, weights, indices, sdfunct):
+    """
+    """
 
+    Ux = data_limited[...,0:1] #values
+    Uy = data_limited[...,1:2] #values
+
+    delta_p = data_limited[...,7:8] #values
+    delta_Ux = data_limited[...,5:6] #values
+    delta_Uy = data_limited[...,6:7] #values
+
+    U_max_norm = np.max(np.sqrt(np.square(Ux) + np.square(Uy)))
+
+    delta_p_adim = delta_p/pow(U_max_norm,2.0) 
+    delta_Ux_adim = delta_Ux/U_max_norm 
+    delta_Uy_adim = delta_Uy/U_max_norm 
+
+    delta_p_interp = self.interpolate_fill(delta_p_adim, vert, weights) #compared to the griddata interpolation 
+    delta_Ux_interp = self.interpolate_fill(delta_Ux_adim, vert, weights)#takes virtually no time  because "vert" and "weigths" where already calculated
+    delta_Uy_interp = self.interpolate_fill(delta_Uy_adim, vert, weights)
+
+    # 1D vectors to 2D arrays
+    grid = np.zeros(shape=(1, self.grid_shape_y, self.grid_shape_x, 4))
+    grid[0,:,:,0:1][tuple(indices.T)] = delta_Ux_interp.reshape(delta_Ux_interp.shape[0],1)
+    grid[0,:,:,1:2][tuple(indices.T)] = delta_Uy_interp.reshape(delta_Uy_interp.shape[0],1)
+    grid[0,:,:,2:3] = sdfunct
+    grid[0,:,:,3:4][tuple(indices.T)] = delta_p_interp.reshape(delta_p_interp.shape[0],1)
+
+    x_list = []
+    obst_list = []
+    y_list = []
+
+    # Setting any nan value to 0
+    grid[np.isnan(grid)] = 0
+
+    lb = np.array([0 + self.block_size * self.delta/2 , 0 + self.block_size * self.delta/2 ])
+    ub = np.array([(self.x_max-self.x_min) - self.block_size * self.delta/2, (self.y_max-self.y_min) - self.block_size * self.delta/2])
+
+    # Select N samples based on LHS
+    XY = lb + (ub-lb)*lhs(2,int(self.n_samples/self.num_ts))
+    XY_indices = (np.round(XY/self.delta)).astype(int)
+
+    new_XY_indices = [tuple(row) for row in XY_indices]
+    XY_indices = np.unique(new_XY_indices, axis=0)
+
+    for [jj, ii] in XY_indices:
+
+            i_range = [int(ii - self.block_size/2), int( ii + self.block_size/2) ]
+            j_range = [int(jj - self.block_size/2), int( jj + self.block_size/2) ]
+
+            x_u = grid[0, i_range[0]:i_range[1] , j_range[0]:j_range[1] , 0:2 ]
+            x_obst = grid[0, i_range[0]:i_range[1] , j_range[0]:j_range[1] , 2:3 ]
+            y = grid[0, i_range[0]:i_range[1] , j_range[0]:j_range[1] , 3:4 ]
+
+            # Remove all the blocks with delta_U = 0 and delta_p = 0
+            if not ((x_u == 0).all() and (y==0).all()):
+              x_list.append(x_u)
+              obst_list.append(x_obst)
+              y_list.append(y)
+
+    x_array = np.array(x_list, dtype = 'float32')
+    obst_array = np.array(obst_list, dtype = 'float32')
+    y_array = np.array(y_list, dtype = 'float32')
+
+    self.max_abs_Ux_list.append(np.max(np.abs(x_array[...,0])))
+    self.max_abs_Uy_list.append(np.max(np.abs(x_array[...,1])))
+    self.max_abs_dist_list.append(np.max(np.abs(obst_array[...,0])))
+
+    # Setting the average pressure in each block to 0
+    for step in range(y_array.shape[0]):
+      y_array[step,...][obst_array[step,...] != 0] -= np.mean(y_array[step,...][obst_array[step,...] != 0])
+    
+    self.max_abs_p_list.append(np.max(np.abs(y_array[...,0])))
+    
+    array = np.c_[x_array,obst_array,y_array]
+    
+    # Removing duplicate data
+    reshaped_array = array.reshape(array.shape[0], -1)
+    # Find unique rows
+    unique_indices = np.unique(reshaped_array, axis=0, return_index=True)[1]
+    unique_array = array[unique_indices]
+    
+    print(f"Writting t{j} to {self.filename}")
+    file = tables.open_file(self.filename, mode='a')
+    file.root.data.append(np.array(unique_array, dtype = 'float16'))
+    file.close()
+
+  def process_sim(self, i):
+    """
+    """
+
+    hdf5_file = h5py.File(self.dataset_path, "r")
+    data = np.array(hdf5_file["sim_data"][i:i+1, :self.num_ts, ...], dtype='float32')
+    top_boundary = hdf5_file["top_bound"][i:i+1, :self.num_ts, ...]
+    obst_boundary = hdf5_file["obst_bound"][i:i+1, :self.num_ts,  ...]
+    hdf5_file.close()          
+
+    indice = self.index(data[0,0,:,0] , -100.0 )[0]
+    data_limited = data[0,0,:indice,:]
+
+    self.x_min = round(np.min(data_limited[...,3]),2)
+    self.x_max = round(np.max(data_limited[...,3]),2)
+
+    self.y_min = round(np.min(data_limited[...,4]),2) #- 0.1
+    self.y_max = round(np.max(data_limited[...,4]),2) #+ 0.1
+
+
+    ######### -------------------- Assuming constant mesh, the following can be done out of the for cycle ------------------------------- ##########
+
+    X0, Y0 = self.create_uniform_grid(self.x_min, self.x_max, self.y_min, self.y_max)
+    xy0 = np.concatenate((np.expand_dims(X0, axis=1),np.expand_dims(Y0, axis=1)), axis=-1)
+    points = data_limited[...,3:5] #coordinates
+
+    vert, weights = self.interp_weights(points, xy0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
+
+    domain_bool, sdf = self.domain_dist(0, top_boundary, obst_boundary, xy0)
+
+    div = 1 #parameter defining the sliding window vertical and horizontal displacements
+    
+    self.grid_shape_y = int(round((self.y_max-self.y_min)/self.delta)) 
+    self.grid_shape_x = int(round((self.x_max-self.x_min)/self.delta)) 
+
+    count_ = data.shape[1]* int(self.grid_shape_y/div - self.block_size/div + 1 ) * int(self.grid_shape_x/div - self.block_size/div + 1 )
+
+    count = 0
+    cicle = 0
+
+    #arrange data in array: #this can be put outside the j loop if the mesh is constant 
+
+    x0 = np.min(X0)
+    y0 = np.min(Y0)
+    dx = self.delta
+    dy = self.delta
+
+    indices= np.zeros((X0.shape[0],2))
+    obst_bool  = np.zeros((self.grid_shape_y,self.grid_shape_x,1))
+    sdfunct = np.zeros((self.grid_shape_y,self.grid_shape_x,1))
+
+    delta_p = data_limited[...,7:8] #values
+    p_interp = self.interpolate_fill(delta_p, vert, weights) 
+  
+    for (step, x_y) in enumerate(xy0):  
+        if domain_bool[step] * (~np.isnan(p_interp[step])) :
+            jj = int(round((x_y[...,0] - x0) / dx))
+            ii = int(round((x_y[...,1] - y0) / dy))
+
+            indices[step,0] = ii
+            indices[step,1] = jj
+            sdfunct[ii,jj,:] = sdf[step]
+            obst_bool[ii,jj,:]  = int(1)
+
+    indices = indices.astype(int)
+
+    for j in range(data.shape[1]):  #100 for both data and data_rect
+      data_limited = data[0,j,:indice,:]#[mask_x]
+      self.process_time_step(j, data_limited, vert, weights, indices, sdfunct)
+
+  def read_dataset(self):
+    """
+    """
       #pathCil, pathRect, pathTria , pathPlate = self.paths[0], self.paths[1], self.paths[2], self.paths[3]
-      pathCil = self.paths[0]
+      self.dataset_path = self.paths[0]
 
       NUM_COLUMNS = 4
 
@@ -175,193 +331,29 @@ class Training:
       array_c = file.create_earray(file.root, 'data', atom, (0, self.block_size, self.block_size, NUM_COLUMNS))
       file.close()
 
-      max_abs_Ux = []
-      max_abs_Uy = []
-      max_abs_dist = []
-      max_abs_p = []
+      self.max_abs_Ux_list = []
+      self.max_abs_Uy_list  = []
+      self.max_abs_dist_list  = []
+      self.max_abs_p_list  = []
 
       sim_cil = False
       sim_tria = False   
       sim_placa = False 
 
-      hdf5_file = h5py.File(pathCil, "r")
-      data = hdf5_file["sim_data"][:self.numSimsCil, :self.numTimeFrames, ...]
-      top_boundary = hdf5_file["top_bound"][:self.numSimsCil, :self.numTimeFrames, ...]
-      obst_boundary = hdf5_file["obst_bound"][:self.numSimsCil, :self.numTimeFrames,  ...]
-      hdf5_file.close()
+      self.num_ts = self.num_ts[0]
 
-      for i in range(np.sum(self.numSims)):
-          
-          indice = self.index(data[i,0,:,0] , -100.0 )[0]
-          data_limited = data[i,0,:indice,:]
+      for i in range(np.sum(self.num_sims)):
+        print(f"\nProcessing sim {i}/{np.sum(self.num_sims)}\n")
+        self.process_sim(i)
 
-          x_min = round(np.min(data_limited[...,3]),2)
-          x_max = round(np.max(data_limited[...,3]),2)
-
-          y_min = round(np.min(data_limited[...,4]),2) #- 0.1
-          y_max = round(np.max(data_limited[...,4]),2) #+ 0.1
-
-
-          ######### -------------------- Assuming constant mesh, the following can be done out of the for cycle ------------------------------- ##########
-
-          X0, Y0 = self.create_uniform_grid(x_min, x_max, y_min, y_max)
-          xy0 = np.concatenate((np.expand_dims(X0, axis=1),np.expand_dims(Y0, axis=1)), axis=-1)
-          points = data_limited[...,3:5] #coordinates
-
-          vert, weights = self.interp_weights(points, xy0) #takes ~100% of the interpolation cost and it's only done once for each different mesh/simulation case
-      
-          domain_bool, sdf = self.domain_dist(i, top_boundary, obst_boundary, xy0)
-
-          div = 1 #parameter defining the sliding window vertical and horizontal displacements
-          
-          self.grid_shape_y = int(round((y_max-y_min)/self.delta)) 
-          self.grid_shape_x = int(round((x_max-x_min)/self.delta)) 
-
-          count_ = data.shape[1]* int(self.grid_shape_y/div - self.block_size/div + 1 ) * int(self.grid_shape_x/div - self.block_size/div + 1 )
-
-          num_samples = int(self.Nsamples)    #number of samples from each sim -------> needs to be adjusted
-
-          count = 0
-          cicle = 0
-
-          #arrange data in array: #this can be put outside the j loop if the mesh is constant 
-
-          x0 = np.min(X0)
-          y0 = np.min(Y0)
-          dx = self.delta
-          dy = self.delta
-
-          indices= np.zeros((X0.shape[0],2))
-          obst_bool  = np.zeros((self.grid_shape_y,self.grid_shape_x,1))
-          sdfunct = np.zeros((self.grid_shape_y,self.grid_shape_x,1))
-
-          delta_p = data_limited[...,7:8] #values
-          p_interp = self.interpolate_fill(delta_p, vert, weights) 
-        
-          for (step, x_y) in enumerate(xy0):  
-              if domain_bool[step] * (~np.isnan(p_interp[step])) :
-                  jj = int(round((x_y[...,0] - x0) / dx))
-                  ii = int(round((x_y[...,1] - y0) / dy))
-
-                  indices[step,0] = ii
-                  indices[step,1] = jj
-                  sdfunct[ii,jj,:] = sdf[step]
-                  obst_bool[ii,jj,:]  = int(1)
-
-          indices = indices.astype(int)
-
-          for j in range(data.shape[1]):  #100 for both data and data_rect
-
-            data_limited = data[i,j,:indice,:]#[mask_x]
-
-            Ux = data_limited[...,0:1] #values
-            Uy = data_limited[...,1:2] #values
-
-            delta_p = data_limited[...,7:8] #values
-            delta_Ux = data_limited[...,5:6] #values
-            delta_Uy = data_limited[...,6:7] #values
-
-            U_max_norm = np.max(np.sqrt(np.square(Ux) + np.square(Uy)))
-
-            delta_p_adim = delta_p/pow(U_max_norm,2.0) 
-            delta_Ux_adim = delta_Ux/U_max_norm 
-            delta_Uy_adim = delta_Uy/U_max_norm 
-
-            delta_p_interp = self.interpolate_fill(delta_p_adim, vert, weights) #compared to the griddata interpolation 
-            delta_Ux_interp = self.interpolate_fill(delta_Ux_adim, vert, weights)#takes virtually no time  because "vert" and "weigths" where already calculated
-            delta_Uy_interp = self.interpolate_fill(delta_Uy_adim, vert, weights)
-
-            #arrange data in array:
-
-            grid = np.zeros(shape=(1, self.grid_shape_y, self.grid_shape_x, 4))
-
-            grid[0,:,:,0:1][tuple(indices.T)] = delta_Ux_interp.reshape(delta_Ux_interp.shape[0],1)
-            grid[0,:,:,1:2][tuple(indices.T)] = delta_Uy_interp.reshape(delta_Uy_interp.shape[0],1)
-            grid[0,:,:,2:3] = sdfunct
-            grid[0,:,:,3:4][tuple(indices.T)] = delta_p_interp.reshape(delta_p_interp.shape[0],1)
-
-            x_list = []
-            obst_list = []
-            y_list = []
-
-            grid[np.isnan(grid)] = 0 #set any nan value to 0
-
-            lb = np.array([0 + self.block_size * self.delta/2 , 0 + self.block_size * self.delta/2 ])
-            ub = np.array([(x_max-x_min) - self.block_size * self.delta/2, (y_max-y_min) - self.block_size * self.delta/2])
-
-            XY = lb + (ub-lb)*lhs(2,int(num_samples/self.numTimeFrames))  #divided by 100 because it samples from each time individually
-            XY_indices = (np.round(XY/self.delta)).astype(int)
-
-            new_XY_indices = [tuple(row) for row in XY_indices]
-            XY_indices = np.unique(new_XY_indices, axis=0)
-
-            for [jj, ii] in XY_indices:
-
-                    i_range = [int(ii - self.block_size/2), int( ii + self.block_size/2) ]
-                    j_range = [int(jj - self.block_size/2), int( jj + self.block_size/2) ]
-
-                    x_u = grid[0, i_range[0]:i_range[1] , j_range[0]:j_range[1] , 0:2 ]
-                    x_obst = grid[0, i_range[0]:i_range[1] , j_range[0]:j_range[1] , 2:3 ]
-                    y = grid[0, i_range[0]:i_range[1] , j_range[0]:j_range[1] , 3:4 ]
-
-                    # Remove all the blocks with delta_U = 0 and delta_p = 0
-                    if not ((x_u == 0).all() and (y==0).all()):
-                      x_list.append(x_u)
-                      #x_list.append(grid[0, i:(i + 100), j:(j + 100), 0:2 ].transpose(1,0,2))
-                      
-                      obst_list.append(x_obst)
-                      # #obst_list.append(grid[0, i:(i + 100), j:(j + 100), 2:3 ].transpose(1,0,2))
-
-                      y_list.append(y)
-                      # #y_list.append(grid[0, i:(i + 100), j:(j + 100), 3:4 ].transpose(1,0,2))
-
-            cicle += 1
-            print(cicle, flush = True)
-
-            x_array = np.array(x_list, dtype = 'float16')#, axis=0 )#.astype('float32') #, dtype = 'float16')
-            obst_array = np.array(obst_list, dtype = 'float16')#, axis=0 )#.astype('float16') #np.array(obst_list, dtype = 'float16')
-            y_array = np.array(y_list, dtype = 'float16')#, axis=0 )#.astype('float16') #np.array(y_list, dtype = 'float16')
-
-            max_abs_Ux.append(np.max(np.abs(x_array[...,0])))
-            max_abs_Uy.append(np.max(np.abs(x_array[...,1])))
-            max_abs_dist.append(np.max(np.abs(obst_array[...,0])))
-
-            for step in range(y_array.shape[0]):
-              y_array[step,...][obst_array[step,...] != 0] -= np.mean(y_array[step,...][obst_array[step,...] != 0])
-            
-            max_abs_p.append(np.max(np.abs(y_array[...,0])))
-            
-            array = np.c_[x_array,obst_array,y_array]
-            
-            ### removing duplicate data
-
-            reshaped_array = array.reshape(array.shape[0], -1)
-
-            # Find unique rows
-            unique_indices = np.unique(reshaped_array, axis=0, return_index=True)[1]
-
-            # Select unique rows
-            unique_array = array[unique_indices]
-
-            # Split the unique array back into individual arrays
-            x_unique_array = unique_array[:, :, :, :2]
-            obst_unique_array = unique_array[:, :, :, 2:3]
-            y_unique_array = unique_array[:, :, :, 3:]
-            
-            file = tables.open_file(self.filename, mode='a')
-            file.root.data.append(array)
-            file.close()
-
-      self.max_abs_Ux = np.max(np.abs(max_abs_Ux))
-      self.max_abs_Uy = np.max(np.abs(max_abs_Uy))
-      self.max_abs_dist = np.max(np.abs(max_abs_dist))
-      self.max_abs_p = np.max(np.abs(max_abs_p))
+      self.max_abs_Ux = np.max(np.abs(self.max_abs_Ux_list))
+      self.max_abs_Uy = np.max(np.abs(self.max_abs_Uy_list))
+      self.max_abs_dist = np.max(np.abs(self.max_abs_dist_list))
+      self.max_abs_p = np.max(np.abs(self.max_abs_p_list))
 
       np.savetxt('maxs', [self.max_abs_Ux, self.max_abs_Uy, self.max_abs_dist, self.max_abs_p] )
           
       return 0
-
-  #coding the training
 
   @tf.function
   def train_step(self, inputs, labels):
@@ -391,9 +383,9 @@ class Training:
   def my_mse_loss(self):
     def loss_f(y_true, y_pred):
 
-      loss = tf.reduce_mean(tf.square(y_true - y_pred) )  #weighted loss -  more relante PC weigth more 
+      loss = tf.reduce_mean(tf.square(y_true - y_pred) )
 
-      return   1e6 * loss
+      return 1e6 * loss
     return loss_f
 
   def _bytes_feature(self, value):
@@ -426,7 +418,8 @@ class Training:
 
   def write_images_to_tfr_short(self, input, output, filename:str="images"):
     filename= filename+".tfrecords"
-    writer = tf.io.TFRecordWriter(filename) #create a writer that'll store our data to disk
+    # Create a writer that'll store our data to disk
+    writer = tf.io.TFRecordWriter(filename)
     count = 0
 
     for index in range(len(input)):
@@ -462,7 +455,7 @@ class Training:
     self.ipca_p = dask_ml.decomposition.IncrementalPCA(max_num_PC)
     self.ipca_input = dask_ml.decomposition.IncrementalPCA(max_num_PC)
 
-    N = int(self.Nsamples * (self.numSimsCil)) # +self.numSimsRect + self.numSimsTria + self.numSimsPlate))
+    N = int(self.n_samples * (self.num_sims)) # +self.numSimsRect + self.numSimsTria + self.numSimsPlate))
 
     chunk_size = int(N/10)
     print('Passing the PCA ' + str(N//chunk_size) + ' times', flush = True)
@@ -557,18 +550,16 @@ class Training:
       
       print('transformed ' + str(i+1) + '/' + str(N//chunk_size), flush = True)
 
-
     client.close()
     
-  def prepare_data (self, hdf5_paths, max_num_PC, outarray_fn = 'outarray.h5'):
+  def prepare_data (self, hdf5_paths, max_num_PC, outarray_fn = 'outarray.h5', outarray_flat_fn= 'outarray_flat.h5'):
 
     #load data
 
     print_shape = True
 
-    #self.numSimsCil, self.numSimsRect, self.numSimsTria , self.numSimsPlate = self.numSims[0], self.numSims[1], self.numSims[2], self.numSims[3] 
-    self.numSimsCil = self.numSims[0]
     self.filename = outarray_fn
+    filename_flat = outarray_flat_fn
       
     if not (os.path.isfile(outarray_fn) and os.path.isfile('maxs')):
       self.read_dataset()
@@ -576,8 +567,6 @@ class Training:
       maxs = np.loadtxt('maxs')
       self.max_abs_Ux, self.max_abs_Uy, self.max_abs_dist, self.max_abs_p = maxs[0], maxs[1], maxs[2], maxs[3]
       
-    filename_flat = 'outarray_flat.h5'
-
     if not (os.path.isfile(filename_flat) and os.path.isfile('ipca_input.pkl') and os.path.isfile('ipca_p.pkl')):
       print('Applying PCA \n')
       self.apply_PCA(filename_flat, max_num_PC)
@@ -671,12 +660,11 @@ class Training:
     depth_y = content['depth_y']
     output = content['output']
     raw_input = content['raw_input']
-    
-    
+       
     #get our 'feature'-- our image -- and reshape it appropriately
     
-    input_out= tf.io.parse_tensor(raw_input, out_type=tf.float64)
-    output_out = tf.io.parse_tensor(output, out_type=tf.float64)
+    input_out= tf.io.parse_tensor(raw_input, out_type=tf.float32)
+    output_out = tf.io.parse_tensor(output, out_type=tf.float32)
 
     return ( input_out , output_out)
 
@@ -757,12 +745,12 @@ class Training:
 
       progbar.update(step+1)
 
-      stopEarly = self.Callback_EarlyStopping(epochs_val_losses, min_delta=0.1/100, patience=250)
+      stopEarly = self.Callback_EarlyStopping(epochs_val_losses, min_delta=0.01/100, patience=250)
       if stopEarly:
         print("Callback_EarlyStopping signal received at epoch= %d/%d"%(epoch,num_epoch))
         break
 
-      if epoch > 20:
+      if epoch > 50:
         min_yet = losses_val_mean
         print('saving model')
         mod = 'model_' + model_name + '.h5'
@@ -784,7 +772,7 @@ class Training:
     return 0
   
 def main_train(dataset_path, num_sims, num_ts, num_epoch, lr, beta, batch_size, standardization_method, \
-              n_samples, block_size, delta, max_num_PC, var_p, var_in, model_size, dropout_rate, outarray_fn):
+              n_samples, block_size, delta, max_num_PC, var_p, var_in, model_size, dropout_rate, outarray_fn, outarray_flat_fn):
 
   if model_size == 'small':
     n_layers = 3
@@ -794,7 +782,7 @@ def main_train(dataset_path, num_sims, num_ts, num_epoch, lr, beta, batch_size, 
     width = [256] + [512]*3 + [256]
   elif model_size == 'big':
     n_layers = 8
-    width = [256] + [512]*6 + [256]
+    width = [256] + [512]*5 + [256]
   elif model_size == 'huge':
     n_layers = 12
     width = [256] + [512]*10 + [256]
@@ -810,7 +798,7 @@ def main_train(dataset_path, num_sims, num_ts, num_epoch, lr, beta, batch_size, 
   Train = Training(delta, block_size,var_p, var_in, paths, n_samples, num_sims, num_ts, standardization_method)
 
   # If you want to read the crude dataset (hdf5) again, delete the 'outarray.h5' file
-  Train.prepare_data (paths, max_num_PC, outarray_fn) #prepare and save data to tf records
+  Train.prepare_data (paths, max_num_PC, outarray_fn, outarray_flat_fn) #prepare and save data to tf records
   Train.load_data_And_train(lr, batch_size, max_num_PC, model_name, beta, num_epoch, n_layers, width, dropout_rate)
 
 if __name__ == '__main__':
@@ -843,6 +831,7 @@ if __name__ == '__main__':
   dropout_rate = 0.2
 
   outarray_fn = '../blocks_dataset/outarray.h5'
+  outarray_flat_fn = '../blocks_dataset/outarray_flat.h5'
 
   main_train(dataset_path, num_sims, num_ts, num_epoch, lr, beta, batch_size, standardization_method, \
-    n_samples, block_size, delta, max_num_PC, var_p, var_in, model_size, dropout_rate, outarray_fn)
+    n_samples, block_size, delta, max_num_PC, var_p, var_in, model_size, dropout_rate, outarray_fn, outarray_flat_fn)

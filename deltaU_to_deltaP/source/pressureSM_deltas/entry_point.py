@@ -42,6 +42,8 @@ def train_entry_point():
                         help='Delta value')
     parser.add_argument('--max_num_PC', type=int, default=512,
                         help='Max number of PCs')
+    parser.add_argument('--outarray_flat_fn', type=str, required=True,
+                        help='Path to flat dataset')
 
     args = parser.parse_args()
 
@@ -101,5 +103,5 @@ def eval_entry_point():
 
 
 if __name__ == "__main__":
-    train_entry_point()
+  train_entry_point()
 
